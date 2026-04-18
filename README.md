@@ -1,6 +1,6 @@
 # Trading automation (Alpha Architect)
 
-Bun/TypeScript service for **scheduled intraday workflows** (IST), **technical triggers** (ORB, mean reversion, liquidity sweep), **AI judge** via OpenRouter, **pattern memory** in Pinecone, and **MongoDB** as the system of record. Angel One integration is stubbed until you wire the real SmartAPI.
+Bun/TypeScript service for **scheduled intraday workflows** (IST), **technical triggers** (ORB, mean reversion, liquidity sweep), **AI judge** via OpenRouter, **pattern memory** in Pinecone, and **MongoDB** as the system of record. **[Angel One SmartAPI](https://smartapi.angelone.in/docs)** is integrated for session login (`loginByPassword`), candles (`getCandleData`), scrip search, positions, and orders (see `src/broker/`). If API key / client / PIN / TOTP seed are incomplete, the app falls back to a stub broker.
 
 ## Features
 
@@ -36,8 +36,13 @@ Create a `.env` in the project root (gitignored) with the variables below. Minim
 | `PINECONE_NAMESPACE` | Namespace for pattern vectors |
 | `OPENAI_API_KEY` | Embeddings (`text-embedding-3-small`–style, 1536 dims) |
 | `OPENROUTER_API_KEY` | Judge / post-mortem model |
-| `TOTP_SEED` / Angel vars | Broker auth (stub until implemented) |
-| `DAILY_STOP_LOSS`, `MAX_CONCURRENT_TRADES`, `EXECUTION_ENV` | Risk and paper/live |
+| `ANGEL_API_KEY` | SmartAPI app API key (`X-PrivateKey`) |
+| `ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD` | Client ID + trading PIN |
+| `TOTP_SEED` | Base32 secret from Angel **Enable TOTP** (used to generate the `totp` field for login) |
+| `ANGEL_CLIENT_PUBLIC_IP` (optional) | Should match the **whitelisted static IP** in your SmartAPI app (orders may fail otherwise) |
+| `DAILY_STOP_LOSS`, `MAX_CONCURRENT_TRADES`, `EXECUTION_ENV` | Risk; `EXECUTION_ENV=LIVE` sends real `placeOrder` calls |
+
+REST paths follow the official SDK map ([`config/api.js`](https://github.com/angel-one/smartapi-javascript/blob/main/config/api.js)). Auth uses **password + TOTP only** (no browser redirect).
 
 See `src/config/env.ts` for the full list and defaults.
 
@@ -50,7 +55,7 @@ See `src/config/env.ts` for the full list and defaults.
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/weekend-optimize.js` for Node |
 | `bun run analyst` | Post-mortem + `lessons_learned` |
-| `bun run sync-history` | OHLC upsert job (needs real broker) |
+| `bun run sync-history` | OHLC upsert job (needs SmartAPI credentials + `TOTP_SEED`) |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
 
 ## PM2 (production-style)
