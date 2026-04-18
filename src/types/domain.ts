@@ -72,3 +72,19 @@ export interface PatternMeta {
   ticker?: string;
   strategy?: string;
 }
+
+/** Mongo `active_watchlist` — session performers from discovery-sync */
+export interface ActiveWatchlistDoc extends Document {
+  _id: string;
+  tickers: string[];
+  updated_at: Date;
+  source?: string;
+  performers?: PerformerScoreRow[];
+}
+
+export interface PerformerScoreRow {
+  ticker: string;
+  score: number;
+  pct5d: number;
+  volRatio: number;
+}

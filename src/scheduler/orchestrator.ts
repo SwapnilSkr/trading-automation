@@ -6,6 +6,7 @@ import { syncIntradayHistory } from "../services/marketSync.js";
 import { fetchOhlcRange } from "../db/repositories.js";
 import { env } from "../config/env.js";
 import { nowIST } from "../time/ist.js";
+import { resolveWatchlistTickers } from "../services/watchlist.js";
 import { currentRunMode, describeMode, type RunMode } from "./mode.js";
 
 export class TradingOrchestrator {
@@ -43,7 +44,8 @@ export class TradingOrchestrator {
         const news = await fetchTodayNewsContext();
         const day = nowIST().startOf("day").toJSDate();
         const end = nowIST().toJSDate();
-        for (const ticker of env.watchedTickers) {
+        const watch = await resolveWatchlistTickers();
+        for (const ticker of watch) {
           const candles = await fetchOhlcRange(ticker, day, end);
           const last5m = aggregateLastNMinutes(candles, 5);
           await this.engine.runScanningPass({
@@ -59,7 +61,8 @@ export class TradingOrchestrator {
         break;
       }
       case "SQUARE_OFF": {
-        for (const ticker of env.watchedTickers) {
+        const watch = await resolveWatchlistTickers();
+        for (const ticker of watch) {
           await this.broker.closeIntraday(ticker);
         }
         this.engine.setOpenCount(0);

@@ -1,12 +1,15 @@
 import type { Collection, Document } from "mongodb";
 import { collections, getDb } from "./mongo.js";
 import type {
+  ActiveWatchlistDoc,
   LessonLearnedDoc,
   NewsArchiveDoc,
   NewsContextDoc,
   Ohlc1m,
   TradeLogDoc,
 } from "../types/domain.js";
+
+export type { PerformerScoreRow } from "../types/domain.js";
 
 async function col<T extends Document>(name: string): Promise<Collection<T>> {
   const db = await getDb();
@@ -34,6 +37,9 @@ export async function ensureIndexes(): Promise<void> {
   const tradesBt = await col<TradeLogDoc>(collections.tradesBacktest);
   await tradesBt.createIndex({ entry_time: -1 });
   await tradesBt.createIndex({ backtest_run_id: 1 });
+
+  const aw = await col<ActiveWatchlistDoc>(collections.activeWatchlist);
+  await aw.createIndex({ updated_at: -1 });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {
@@ -136,4 +142,16 @@ export async function upsertNews(doc: NewsContextDoc): Promise<void> {
 export async function getNewsForDate(date: string): Promise<NewsContextDoc | null> {
   const c = await col<NewsContextDoc>(collections.news);
   return c.findOne({ date });
+}
+
+export async function upsertSessionWatchlist(
+  doc: ActiveWatchlistDoc
+): Promise<void> {
+  const c = await col<ActiveWatchlistDoc>(collections.activeWatchlist);
+  await c.replaceOne({ _id: doc._id }, doc, { upsert: true });
+}
+
+export async function getSessionWatchlist(): Promise<ActiveWatchlistDoc | null> {
+  const c = await col<ActiveWatchlistDoc>(collections.activeWatchlist);
+  return c.findOne({ _id: "current_session" });
 }

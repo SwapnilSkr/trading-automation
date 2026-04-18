@@ -64,6 +64,17 @@ export const env = {
 
   watchedTickers: (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY").split(",").map((s) => s.trim()),
 
+  /**
+   * `env` — use `WATCHED_TICKERS` only.
+   * `active_watchlist` — use Mongo `active_watchlist` doc `_id: current_session` (from discovery-sync).
+   */
+  tradingTickerSource: (process.env.TRADING_TICKER_SOURCE ?? "env") as
+    | "env"
+    | "active_watchlist",
+
+  /** Extra gap between symbols during discovery (daily fetch + scrip resolve); stay ≥1000ms under Angel limits */
+  discoverySymbolDelayMs: num("DISCOVERY_SYMBOL_DELAY_MS", 2000),
+
   healthPort: num("HEALTH_PORT", 3000),
 
   niftySymbol: process.env.NIFTY_BENCHMARK_TICKER ?? "NIFTY50",

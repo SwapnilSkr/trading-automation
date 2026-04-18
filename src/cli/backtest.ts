@@ -1,6 +1,10 @@
 import "dotenv/config";
 import { readFileSync, existsSync } from "node:fs";
-import { ensureIndexes, bulkInsertNewsArchive } from "../db/repositories.js";
+import {
+  ensureIndexes,
+  bulkInsertNewsArchive,
+  getSessionWatchlist,
+} from "../db/repositories.js";
 import { runBacktestReplay } from "../backtest/BacktestOrchestrator.js";
 import { parseHistoricalNewsFile } from "../services/historicalNewsFeed.js";
 import type { NewsArchiveDoc } from "../types/domain.js";
@@ -21,6 +25,10 @@ function parseArgs(): Record<string, string | boolean> {
     }
     if (k === "--no-persist") {
       out["no-persist"] = true;
+      continue;
+    }
+    if (k === "--use-active-watchlist") {
+      out["use-active-watchlist"] = true;
       continue;
     }
     if (k?.startsWith("--")) {
@@ -71,6 +79,7 @@ async function main(): Promise<void> {
 
 Options:
   --tickers RELIANCE,TCS,INFY   (default: WATCHED_TICKERS from .env)
+  --use-active-watchlist        use tickers from Mongo active_watchlist (run discovery-sync first)
   --step 15                     minutes between simulated scans (default: 15)
   --judge-model <openrouter>    override JUDGE_MODEL_BACKTEST
   --skip-judge                  no LLM calls (technicals only path still evaluates)
@@ -83,14 +92,26 @@ Options:
 
   await ensureIndexes();
 
-  const tickers = args.tickers
-    ? String(args.tickers)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY")
-        .split(",")
-        .map((s) => s.trim());
+  let tickers: string[];
+  if (args["use-active-watchlist"] === true) {
+    const doc = await getSessionWatchlist();
+    if (!doc?.tickers?.length) {
+      console.error(
+        "[backtest] --use-active-watchlist: no Mongo active_watchlist.current_session; run discovery-sync first"
+      );
+      process.exit(1);
+    }
+    tickers = doc.tickers;
+  } else if (args.tickers) {
+    tickers = String(args.tickers)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } else {
+    tickers = (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY")
+      .split(",")
+      .map((s) => s.trim());
+  }
 
   const stepMinutes = Math.max(1, parseInt(String(args.step ?? "15"), 10) || 15);
 

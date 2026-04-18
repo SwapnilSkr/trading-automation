@@ -2,6 +2,7 @@ import type { BrokerClient } from "../broker/types.js";
 import { env } from "../config/env.js";
 import { upsertOhlcBatch } from "../db/repositories.js";
 import { nowIST } from "../time/ist.js";
+import { resolveWatchlistTickers } from "./watchlist.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -11,7 +12,8 @@ function sleep(ms: number): Promise<void> {
 export async function syncIntradayHistory(broker: BrokerClient): Promise<void> {
   const end = nowIST().endOf("day").toJSDate();
   const start = nowIST().minus({ hours: 6 }).toJSDate();
-  await syncOhlcForRange(broker, start, end, env.watchedTickers);
+  const tickers = await resolveWatchlistTickers();
+  await syncOhlcForRange(broker, start, end, tickers);
 }
 
 /**

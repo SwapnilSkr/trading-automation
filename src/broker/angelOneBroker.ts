@@ -171,6 +171,55 @@ export class AngelOneBroker implements BrokerClient {
     return dedupeSortOhlc(all);
   }
 
+  /**
+   * Single `getCandleData` call for ONE_DAY (minimizes requests vs minute walk).
+   */
+  async fetchDailyOhlc(
+    ticker: string,
+    from: Date,
+    to: Date
+  ): Promise<Ohlc1m[]> {
+    const token = await this.authorized();
+    const { symboltoken, tradingsymbol } = await this.resolveEquitySymbol(
+      ticker,
+      token
+    );
+    const zone = IST;
+    const fromStr = DateTime.fromJSDate(from, { zone })
+      .startOf("day")
+      .toFormat("yyyy-MM-dd HH:mm");
+    const toStr = DateTime.fromJSDate(to, { zone })
+      .endOf("day")
+      .toFormat("yyyy-MM-dd HH:mm");
+
+    const res = await this.http.post(
+      SmartApiPaths.getCandleData,
+      {
+        exchange: env.angelExchange,
+        symboltoken,
+        interval: "ONE_DAY",
+        fromdate: fromStr,
+        todate: toStr,
+      },
+      token
+    );
+
+    if (res.status !== true) {
+      const msg =
+        typeof res.message === "string" ? res.message : JSON.stringify(res);
+      console.warn(
+        `[Angel] getCandleData ONE_DAY ${ticker} ${fromStr}–${toStr}: ${msg}`
+      );
+      return [];
+    }
+
+    const rows = parseCandlePayload(res.data, ticker, tradingsymbol);
+    if (env.angelApiThrottleMs > 0) {
+      await new Promise((r) => setTimeout(r, env.angelApiThrottleMs));
+    }
+    return dedupeSortOhlc(rows);
+  }
+
   private async resolveEquitySymbol(
     baseTicker: string,
     token: string

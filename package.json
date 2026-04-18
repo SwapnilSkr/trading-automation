@@ -6,10 +6,11 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "typecheck": "tsc --noEmit",
     "dev": "bun run --watch src/index.ts",
-    "build": "rm -rf dist && bun build src/index.ts --outfile dist/index.js --target node && bun build src/analyst.ts --outfile dist/analyst.js --target node && bun build src/cli/sync-history.ts --outfile dist/sync-history.js --target node && bun build src/cli/weekend-optimize.ts --outfile dist/weekend-optimize.js --target node && bun build src/cli/backtest.ts --outfile dist/backtest.js --target node",
+    "build": "rm -rf dist && bun build src/index.ts --outfile dist/index.js --target node && bun build src/analyst.ts --outfile dist/analyst.js --target node && bun build src/cli/sync-history.ts --outfile dist/sync-history.js --target node && bun build src/cli/discovery-sync.ts --outfile dist/discovery-sync.js --target node && bun build src/cli/weekend-optimize.ts --outfile dist/weekend-optimize.js --target node && bun build src/cli/backtest.ts --outfile dist/backtest.js --target node",
     "start": "bun run src/index.ts",
     "analyst": "bun run src/analyst.ts",
     "sync-history": "bun run src/cli/sync-history.ts",
+    "discovery-sync": "bun run src/cli/discovery-sync.ts",
     "weekend-optimize": "bun run src/cli/weekend-optimize.ts",
     "backtest": "bun run src/cli/backtest.ts --"
   },

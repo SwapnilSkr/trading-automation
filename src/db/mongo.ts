@@ -28,4 +28,5 @@ export const collections = {
   lessons: "lessons_learned",
   news: "news_context",
   newsArchive: "news_archive",
+  activeWatchlist: "active_watchlist",
 } as const;

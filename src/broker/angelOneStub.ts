@@ -31,6 +31,14 @@ export class AngelOneStubBroker implements BrokerClient {
     return [];
   }
 
+  async fetchDailyOhlc(
+    _ticker: string,
+    _from: Date,
+    _to: Date
+  ): Promise<Ohlc1m[]> {
+    return [];
+  }
+
   async placePaperOrder(input: {
     ticker: string;
     side: "BUY" | "SELL";

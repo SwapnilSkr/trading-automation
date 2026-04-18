@@ -70,6 +70,9 @@ curl -X POST http://127.0.0.1:3000/v1/emergency/square-off \
 ### Data management (Mongo OHLC)
 
 - **`bun run sync-history --days 5`** — Backfills `ohlc_1m` for **`WATCHED_TICKERS`** (IST day window ending today). Use **`--ticker RELIANCE`** or **`--tickers A,B`** to narrow the list. Optional **`--from` / `--to`** (`YYYY-MM-DD`, IST) for an explicit range. Expect **no rows** for NSE holidays and weekends; indicators use **consecutive bars** only, not calendar-filled flat prices between sessions.
+- **`bun run discovery-sync --days 5 --top 10`** — Loads **Nifty 100** from bundled `data/ind_nifty100list.csv` (optional **`--refresh-universe`** to re-download from NSE). For each name, one **`ONE_DAY`** `getCandleData` call, then scores **|5-session % change| × volume ratio**, keeps top **N**, upserts Mongo **`active_watchlist`** (`_id: current_session`), then **`ohlc_1m`** sync for those tickers only (skip with **`--skip-ohlc`**). Uses **`DISCOVERY_SYMBOL_DELAY_MS`** (default **2000**) between symbols to reduce Angel **403** rate limits. **`--dry-run`** prints rankings without Mongo/OHLC writes.
+- **`TRADING_TICKER_SOURCE=active_watchlist`** — Daemon **`EXECUTION`**, **`SQUARE_OFF`**, and **`syncIntradayHistory`** use **`active_watchlist.current_session`** instead of **`WATCHED_TICKERS`** (falls back to env if the doc is missing).
+- **Backtest:** **`--use-active-watchlist`** uses the current Mongo session list (for true point-in-time selection without look-ahead, you would store dated snapshots separately — not implemented yet).
 - **`bun run analyst`** — Evening dual-call post-mortem (winners vs losers) into `lessons_learned`.
 
 ### Historical news (backtest / replay)
@@ -101,6 +104,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBAN
 | `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/weekend-optimize.js` for Node |
 | `bun run analyst` | Post-mortem + `lessons_learned` |
 | `bun run sync-history` | OHLC upsert / backfill (see **Data management**; needs SmartAPI + `TOTP_SEED` for live Angel) |
+| `bun run discovery-sync` | Nifty 100 momentum scan → `active_watchlist` + optional 1m OHLC for top tickers |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
 | `bun run backtest -- --from … --to …` | Time Machine replay (Mongo OHLC + historical news) |
 
