@@ -78,10 +78,11 @@ curl -X POST http://127.0.0.1:3000/v1/emergency/square-off \
 
 ### Historical news (backtest / replay)
 
-- **File:** `data/historical_news.json` (or set `HISTORICAL_NEWS_PATH`) — array of `{ "ts": "ISO-8601", "headlines": ["..."] }` and/or `{ "date": "YYYY-MM-DD", "headlines": [...] }` (interpreted in IST).
-- **Mongo:** collection `news_archive` with `{ ts, headlines[] }`. Seed with:
-  `bun run backtest -- --import-news data/historical_news.json`
-- At each simulated time, replay uses headlines from **JSON + Mongo** with `ts <= simulated moment`.
+- **Live daemon:** `fetchTodayNewsContext()` pulls **Economic Times markets/stocks RSS** (`NEWS_ET_RSS_URL`, default ET feed) into Mongo **`news_context`** for **today (IST)**, then passes headlines to the judge. On RSS failure it uses the existing row or a stub.
+- **Manual session seed:** `bun run backfill-news` upserts sample **`news_context`** rows for fixed IST dates (edit `src/cli/backfill-news.ts` for your week).
+- **Discovery:** `bun run discovery-sync` without `--to` (or `--to` = **today IST**) runs the same RSS ingest first; historical `--to` logs a reminder to use **backfill-news** / **`news_archive`**.
+- **File:** `data/historical_news.json` (or `HISTORICAL_NEWS_PATH`) — array of `{ "ts": "ISO-8601", "headlines": ["..."] }` and/or `{ "date": "YYYY-MM-DD", "headlines": [...] }` (IST).
+- **Mongo:** `news_archive` with `{ ts, headlines[] }`. Seed with `bun run backtest -- --import-news data/historical_news.json`. Replay merges **JSON + Mongo** with `ts <= simulated moment`.
 
 ### Time Machine backtest (Path A)
 
@@ -106,6 +107,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBAN
 | `bun run analyst` | Post-mortem + `lessons_learned` |
 | `bun run sync-history` | OHLC upsert / backfill (see **Data management**; needs SmartAPI + `TOTP_SEED` for live Angel) |
 | `bun run discovery-sync` | Nifty 100 momentum scan → `active_watchlist` + optional 1m OHLC for top tickers |
+| `bun run backfill-news` | Seed `news_context` with manual headlines for historical backtest days |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
 | `bun run backtest -- --from … --to …` | Time Machine replay (Mongo OHLC + historical news) |
 

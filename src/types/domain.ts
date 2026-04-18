@@ -63,6 +63,7 @@ export interface NewsContextDoc extends Document {
   date: string;
   headlines: string[];
   source?: string;
+  updated_at?: Date;
 }
 
 export interface PatternMeta {

@@ -10,6 +10,8 @@ import "dotenv/config";
 import { createBroker } from "../broker/factory.js";
 import { ensureIndexes } from "../db/repositories.js";
 import { runDiscoverySync } from "../services/discoveryRun.js";
+import { ingestRSSNews } from "../services/news.js";
+import { istDateString } from "../time/ist.js";
 
 function parseArgs(): {
   days: number;
@@ -91,6 +93,18 @@ async function main(): Promise<void> {
   await ensureIndexes();
   const broker = createBroker();
   await broker.authenticate();
+
+  const todayIst = istDateString();
+  const asOfForNews = opts.to ?? todayIst;
+  if (!opts.dryRun && asOfForNews === todayIst) {
+    console.log("[discovery-sync] ingesting ET RSS → news_context (today IST)…");
+    const headlines = await ingestRSSNews(asOfForNews);
+    console.log(`[discovery-sync] RSS stored ${headlines.length} headlines`);
+  } else if (opts.to) {
+    console.log(
+      `[discovery-sync] asOf ${asOfForNews} is not today — use backfill-news or news_archive for that date’s headlines`
+    );
+  }
 
   console.log(
     `[discovery-sync] universe=Nifty100 scoring=${opts.days}d top=${opts.top} asOf=${opts.to ?? "today"} dryRun=${opts.dryRun}`

@@ -40,6 +40,11 @@ export const env = {
   historicalNewsPath:
     process.env.HISTORICAL_NEWS_PATH ?? "data/historical_news.json",
 
+  /** Economic Times (or other) RSS for live `news_context` ingestion */
+  newsEtRssUrl:
+    process.env.NEWS_ET_RSS_URL ??
+    "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+
   angelApiKey: process.env.ANGEL_API_KEY ?? "",
   /** Dashboard secret (UUID); REST login uses API key + PIN + TOTP per SmartAPI docs */
   angelApiSecret: process.env.ANGEL_API_SECRET ?? "",
