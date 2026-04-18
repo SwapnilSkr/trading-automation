@@ -78,9 +78,10 @@ curl -X POST http://127.0.0.1:3000/v1/emergency/square-off \
 
 ### Historical news (backtest / replay)
 
-- **Live daemon:** `fetchTodayNewsContext()` pulls **Economic Times markets/stocks RSS** (`NEWS_ET_RSS_URL`, default ET feed) into Mongo **`news_context`** for **today (IST)**, then passes headlines to the judge. On RSS failure it uses the existing row or a stub.
+- **Live daemon:** `fetchTodayNewsContext()` pulls **ET markets/stocks RSS** (`NEWS_ET_RSS_URL`) and, unless **`NEWS_SENTINEL=false`**, merges **Moneycontrol** HTML headlines (`SENTINEL_MC_URL`) via Cheerio into Mongo **`news_context`** for **today (IST)**. On total failure it uses the existing row or a stub. Scraping can break if markup changes or sites return **403**; respect each publisher’s terms and rate limits.
 - **Manual session seed:** `bun run backfill-news` upserts sample **`news_context`** rows for fixed IST dates (edit `src/cli/backfill-news.ts` for your week).
-- **Discovery:** `bun run discovery-sync` without `--to` (or `--to` = **today IST**) runs the same RSS ingest first; historical `--to` logs a reminder to use **backfill-news** / **`news_archive`**.
+- **ET archive backfill (research):** `bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD` walks **Economictimes archivelist** pages, keyword-filters market-ish titles (`--no-filter` to skip), and upserts **`news_context`**. Uses **`ARCHIVE_SCRAPER_DELAY_MS`** between days. Not a substitute for licensed news data in production.
+- **Discovery:** `bun run discovery-sync` without `--to` (or `--to` = **today IST**) refreshes the same hybrid news path first; historical `--to` logs a reminder to use **backfill-news**, **backfill-news-scraper**, or **`news_archive`**.
 - **File:** `data/historical_news.json` (or `HISTORICAL_NEWS_PATH`) — array of `{ "ts": "ISO-8601", "headlines": ["..."] }` and/or `{ "date": "YYYY-MM-DD", "headlines": [...] }` (IST).
 - **Mongo:** `news_archive` with `{ ts, headlines[] }`. Seed with `bun run backtest -- --import-news data/historical_news.json`. Replay merges **JSON + Mongo** with `ts <= simulated moment`.
 
@@ -103,11 +104,12 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBAN
 | `bun run dev` | Watch mode, main process |
 | `bun run start` | Run `src/index.ts` once (no watch) |
 | `bun run typecheck` | `tsc --noEmit` |
-| `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/discovery-sync.js`, `dist/weekend-optimize.js`, `dist/backtest.js` for Node |
+| `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/discovery-sync.js`, `dist/backfill-news.js`, `dist/backfill-news-scraper.js`, `dist/weekend-optimize.js`, `dist/backtest.js` for Node |
 | `bun run analyst` | Post-mortem + `lessons_learned` |
 | `bun run sync-history` | OHLC upsert / backfill (see **Data management**; needs SmartAPI + `TOTP_SEED` for live Angel) |
 | `bun run discovery-sync` | Nifty 100 momentum scan → `active_watchlist` + optional 1m OHLC for top tickers |
 | `bun run backfill-news` | Seed `news_context` with manual headlines for historical backtest days |
+| `bun run backfill-news-scraper` | Scrape ET archive pages into `news_context` (keyword filter; see **Historical news**) |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
 | `bun run backtest -- --from … --to …` | Time Machine replay (Mongo OHLC + historical news) |
 

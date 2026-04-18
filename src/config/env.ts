@@ -45,6 +45,16 @@ export const env = {
     process.env.NEWS_ET_RSS_URL ??
     "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
 
+  /** Merge Moneycontrol (etc.) HTML scrape with RSS in `fetchTodayNewsContext` */
+  newsSentinelEnabled: process.env.NEWS_SENTINEL !== "false",
+  sentinelMoneycontrolUrl:
+    process.env.SENTINEL_MC_URL ??
+    "https://www.moneycontrol.com/news/business/markets/",
+  sentinelTimeoutMs: num("SENTINEL_TIMEOUT_MS", 15_000),
+
+  /** Delay between ET archive day requests (backfill-news-scraper) */
+  archiveScraperDelayMs: num("ARCHIVE_SCRAPER_DELAY_MS", 2500),
+
   angelApiKey: process.env.ANGEL_API_KEY ?? "",
   /** Dashboard secret (UUID); REST login uses API key + PIN + TOTP per SmartAPI docs */
   angelApiSecret: process.env.ANGEL_API_SECRET ?? "",
