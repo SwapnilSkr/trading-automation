@@ -1,0 +1,84 @@
+import { Pinecone } from "@pinecone-database/pinecone";
+import { env } from "../config/env.js";
+import type { PatternMeta } from "../types/domain.js";
+
+function client(): Pinecone | null {
+  const key = env.pineconeApiKey();
+  if (!key) return null;
+  return new Pinecone({ apiKey: key });
+}
+
+function flatMeta(m: PatternMeta): Record<string, string | number | boolean> {
+  return {
+    outcome: String(m.outcome),
+    pnl_percent: Number(m.pnl_percent),
+    date: String(m.date),
+    ...(m.ticker !== undefined ? { ticker: String(m.ticker) } : {}),
+    ...(m.strategy !== undefined ? { strategy: String(m.strategy) } : {}),
+  };
+}
+
+export async function upsertPatternVector(
+  id: string,
+  vector: number[],
+  meta: PatternMeta
+): Promise<void> {
+  const pc = client();
+  if (!pc) {
+    console.warn("[Pinecone] PINECONE_API_KEY missing — skip upsert");
+    return;
+  }
+  const index = pc.index(env.pineconeIndex);
+  await index.namespace(env.pineconeNamespace).upsert({
+    records: [{ id, values: vector, metadata: flatMeta(meta) }],
+  });
+}
+
+export interface SimilarPattern {
+  id: string;
+  score: number;
+  meta: PatternMeta;
+}
+
+export async function querySimilarPatterns(
+  vector: number[],
+  topK: number
+): Promise<SimilarPattern[]> {
+  const pc = client();
+  if (!pc) return [];
+  const index = pc.index(env.pineconeIndex);
+  const res = await index.namespace(env.pineconeNamespace).query({
+    vector,
+    topK,
+    includeMetadata: true,
+  });
+  const matches = res.matches ?? [];
+  return matches.map((m) => {
+    const md = (m.metadata ?? {}) as Record<string, unknown>;
+    return {
+      id: m.id,
+      score: m.score ?? 0,
+      meta: {
+        outcome: String(md.outcome ?? "UNKNOWN"),
+        pnl_percent: Number(md.pnl_percent ?? 0),
+        date: String(md.date ?? ""),
+        ticker: md.ticker !== undefined ? String(md.ticker) : undefined,
+        strategy: md.strategy !== undefined ? String(md.strategy) : undefined,
+      },
+    };
+  });
+}
+
+/** Rough probability of favorable outcome from nearest neighbors */
+export function scoreFromNeighbors(
+  neighbors: SimilarPattern[],
+  minSimilarity = 0.72
+): { useMemory: boolean; pWin: number; sample?: SimilarPattern } {
+  const strong = neighbors.filter((n) => n.score >= minSimilarity);
+  if (strong.length === 0) {
+    return { useMemory: false, pWin: 0.5 };
+  }
+  const wins = strong.filter((n) => n.meta.outcome === "WIN").length;
+  const pWin = wins / strong.length;
+  return { useMemory: true, pWin, sample: strong[0] };
+}
