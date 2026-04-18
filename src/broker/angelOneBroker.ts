@@ -161,6 +161,10 @@ export class AngelOneBroker implements BrokerClient {
         all.push(...parseCandlePayload(res.data, ticker, tradingsymbol));
       }
 
+      if (env.angelApiThrottleMs > 0) {
+        await new Promise((r) => setTimeout(r, env.angelApiThrottleMs));
+      }
+
       cursor = chunkEnd.plus({ minutes: 1 });
     }
 

@@ -53,6 +53,11 @@ export const env = {
   angelMacAddress: process.env.ANGEL_MAC_ADDRESS ?? "00:00:00:00:00:00",
   angelExchange: process.env.ANGEL_EXCHANGE ?? "NSE",
 
+  /** Pause between `getCandleData` chunk requests to avoid Angel rate limits (403) */
+  angelApiThrottleMs: num("ANGEL_API_THROTTLE_MS", 450),
+  /** Extra pause between tickers during `sync-history` */
+  angelSyncTickerGapMs: num("ANGEL_SYNC_TICKER_GAP_MS", 800),
+
   dailyStopLoss: num("DAILY_STOP_LOSS", 25_000),
   maxConcurrentTrades: num("MAX_CONCURRENT_TRADES", 3),
   executionEnv: (process.env.EXECUTION_ENV ?? "PAPER") as "PAPER" | "LIVE",
