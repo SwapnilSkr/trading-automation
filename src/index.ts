@@ -31,6 +31,52 @@ const app = new Elysia()
       tick_age_ms: hasTick ? ageMs : null,
     };
   })
+  .post("/v1/emergency/square-off", async ({ request, set }) => {
+    const configured = env.emergencySquareOffSecret;
+    if (!configured) {
+      set.status = 404;
+      return { ok: false, error: "Emergency route disabled (set EMERGENCY_SQUARE_OFF_SECRET)" };
+    }
+    const key = request.headers.get("x-emergency-key") ?? "";
+    if (key !== configured) {
+      set.status = 401;
+      return { ok: false, error: "Unauthorized" };
+    }
+
+    await broker.authenticate();
+    await broker.refreshSessionIfNeeded();
+    const positions = await broker.listOpenPositions();
+    const closed: string[] = [];
+    const errors: { ticker: string; message: string }[] = [];
+
+    for (const p of positions) {
+      try {
+        await broker.closeIntraday(p.ticker);
+        closed.push(p.ticker);
+      } catch (e) {
+        errors.push({
+          ticker: p.ticker,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    setImmediate(() => {
+      console.error(
+        "[EMERGENCY] square-off finished — exiting (pm2 may restart; run pm2 stop if needed)"
+      );
+      process.exit(errors.length > 0 ? 1 : 0);
+    });
+
+    return {
+      ok: errors.length === 0,
+      executionEnv: env.executionEnv,
+      closed,
+      errors,
+      note:
+        "Process exit scheduled. If PM2 autorestarts this app, run `pm2 stop <name>` to stay flat.",
+    };
+  })
   .listen(env.healthPort);
 
 console.log(

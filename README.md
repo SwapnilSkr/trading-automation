@@ -46,6 +46,32 @@ REST paths follow the official SDK map ([`config/api.js`](https://github.com/ang
 
 See `src/config/env.ts` for the full list and defaults.
 
+### Risk and intelligence controls
+
+| Variable | Purpose |
+|----------|---------|
+| `JUDGE_COOLDOWN_MS` | Default `900000` (15 minutes). Minimum time between judge / Pinecone-gate evaluations **per ticker** in live mode, to avoid LLM spam when price chops around a trigger. |
+| `PINECONE_GATE_ENABLED` | Default on; set `false` to always send borderline patterns to the judge. When on, a top neighbor with score ≥ `PINECONE_GATE_MIN_SCORE` and outcome `WIN` can approve without OpenRouter (`PINECONE_MATCH`). |
+| `PINECONE_GATE_MIN_SCORE` | Cosine similarity threshold for the gate (default `0.98`). |
+| `EMERGENCY_SQUARE_OFF_SECRET` | If set, enables `POST /v1/emergency/square-off` with header `X-Emergency-Key: <same value>`. Issues **MARKET** exits for all open positions (via existing broker paths), then **exits the process** (see PM2 note below). |
+
+### Health and emergency API
+
+- **`GET /health`** — Includes `last_tick_at`, `tick_stale` (true if no tick yet or last tick older than ~2 minutes), and `tick_age_ms`. Use this to detect a frozen scheduler while the HTTP server is still up.
+- **`POST /v1/emergency/square-off`** — Requires `EMERGENCY_SQUARE_OFF_SECRET` and matching `X-Emergency-Key`. Squares all listed positions, then calls `process.exit`. If PM2 is configured with autorestart, the app may come back up; run `pm2 stop <app>` if you want the daemon fully off after a nuclear exit.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:3000/v1/emergency/square-off \
+  -H "X-Emergency-Key: your-long-random-secret"
+```
+
+### Data management (Mongo OHLC)
+
+- **`bun run sync-history --days 5`** — Backfills `ohlc_1m` for **`WATCHED_TICKERS`** (IST day window ending today). Use **`--ticker RELIANCE`** or **`--tickers A,B`** to narrow the list. Optional **`--from` / `--to`** (`YYYY-MM-DD`, IST) for an explicit range. Expect **no rows** for NSE holidays and weekends; indicators use **consecutive bars** only, not calendar-filled flat prices between sessions.
+- **`bun run analyst`** — Evening dual-call post-mortem (winners vs losers) into `lessons_learned`.
+
 ### Historical news (backtest / replay)
 
 - **File:** `data/historical_news.json` (or set `HISTORICAL_NEWS_PATH`) — array of `{ "ts": "ISO-8601", "headlines": ["..."] }` and/or `{ "date": "YYYY-MM-DD", "headlines": [...] }` (interpreted in IST).
@@ -74,7 +100,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBAN
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/weekend-optimize.js` for Node |
 | `bun run analyst` | Post-mortem + `lessons_learned` |
-| `bun run sync-history` | OHLC upsert job (needs SmartAPI credentials + `TOTP_SEED`) |
+| `bun run sync-history` | OHLC upsert / backfill (see **Data management**; needs SmartAPI + `TOTP_SEED` for live Angel) |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
 | `bun run backtest -- --from … --to …` | Time Machine replay (Mongo OHLC + historical news) |
 

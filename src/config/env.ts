@@ -69,4 +69,10 @@ export const env = {
   /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
   pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
   pineconeGateMinScore: num("PINECONE_GATE_MIN_SCORE", 0.98),
+
+  /**
+   * If set, `POST /v1/emergency/square-off` requires header `X-Emergency-Key: <value>`.
+   * Empty disables the route (returns 404).
+   */
+  emergencySquareOffSecret: process.env.EMERGENCY_SQUARE_OFF_SECRET ?? "",
 };

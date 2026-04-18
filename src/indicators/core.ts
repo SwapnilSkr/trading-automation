@@ -1,5 +1,10 @@
 import type { Ohlc1m } from "../types/domain.js";
 
+/**
+ * Indicators here are **bar-based** (last N rows in `candles`), not calendar-clock.
+ * Mongo `ohlc_1m` has no rows on non-session days, so there is no synthetic “flat”
+ * weekend string of prices—only a jump from the prior session’s last bar to the next.
+ */
 export function closes(candles: Ohlc1m[]): number[] {
   return candles.map((c) => c.c);
 }
