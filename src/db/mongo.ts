@@ -24,6 +24,8 @@ export async function closeMongo(): Promise<void> {
 export const collections = {
   ohlc1m: "ohlc_1m",
   trades: "trades",
+  tradesBacktest: "trades_backtest",
   lessons: "lessons_learned",
   news: "news_context",
+  newsArchive: "news_archive",
 } as const;

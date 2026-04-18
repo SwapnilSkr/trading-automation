@@ -7,7 +7,11 @@ import {
   querySimilarPatterns,
   scoreFromNeighbors,
 } from "../pinecone/patternStore.js";
-import { fetchOhlcRange, insertTrade } from "../db/repositories.js";
+import {
+  fetchOhlcRange,
+  insertBacktestTrade,
+  insertTrade,
+} from "../db/repositories.js";
 import {
   evaluateBigBoy,
   evaluateMeanReversion,
@@ -16,7 +20,21 @@ import {
 } from "../strategies/triggers.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
 import { checkSafety, createSafetyState, type SafetyState } from "./safety.js";
-import { nowIST } from "../time/ist.js";
+import { DateTime } from "luxon";
+import { IST, nowIST } from "../time/ist.js";
+
+export interface BacktestPassOptions {
+  /** Wall-clock time being simulated (IST session context) */
+  simulatedAt: Date;
+  judgeModel?: string;
+  /** If true, do not call broker (replay only) */
+  skipOrders?: boolean;
+  /** Write to `trades_backtest` instead of `trades` */
+  persistBacktest?: boolean;
+  runId?: string;
+  /** If true, skip OpenRouter entirely (deterministic deny) */
+  skipJudge?: boolean;
+}
 
 export class ExecutionEngine {
   private safety: SafetyState = createSafetyState();
@@ -36,13 +54,16 @@ export class ExecutionEngine {
     this.openCount = n;
   }
 
-  async runScanningPass(args: {
-    ticker: string;
-    sessionCandles: Ohlc1m[];
-    last5m?: Ohlc1m;
-    niftyTrendHint?: string;
-    newsHeadlines?: string[];
-  }): Promise<void> {
+  async runScanningPass(
+    args: {
+      ticker: string;
+      sessionCandles: Ohlc1m[];
+      last5m?: Ohlc1m;
+      niftyTrendHint?: string;
+      newsHeadlines?: string[];
+    },
+    backtest?: BacktestPassOptions
+  ): Promise<void> {
     if (!checkSafety(this.safety, this.openCount)) return;
 
     const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines } =
@@ -55,13 +76,13 @@ export class ExecutionEngine {
     const mr = evaluateMeanReversion(sessionCandles);
     if (mr) triggers.push(mr);
 
-    const today = nowIST().startOf("day");
-    const y = today.minus({ days: 1 });
-    const priorDay = await fetchOhlcRange(
-      ticker,
-      y.toJSDate(),
-      y.endOf("day").toJSDate()
-    );
+    const sim = backtest?.simulatedAt
+      ? DateTime.fromJSDate(backtest.simulatedAt, { zone: IST })
+      : nowIST();
+    const priorDayStart = sim.startOf("day").minus({ days: 1 });
+    const priorFrom = priorDayStart.startOf("day").toJSDate();
+    const priorTo = priorDayStart.endOf("day").toJSDate();
+    const priorDay = await fetchOhlcRange(ticker, priorFrom, priorTo);
     const pd = priorDayHighLow(priorDay);
     if (pd && last5m) {
       const bb = evaluateBigBoy(last5m, pd);
@@ -73,7 +94,7 @@ export class ExecutionEngine {
         niftyTrendHint,
         newsHeadlines,
         sessionCandles,
-      });
+      }, backtest);
     }
   }
 
@@ -84,7 +105,8 @@ export class ExecutionEngine {
       niftyTrendHint?: string;
       newsHeadlines?: string[];
       sessionCandles: Ohlc1m[];
-    }
+    },
+    backtest?: BacktestPassOptions
   ): Promise<void> {
     if (!checkSafety(this.safety, this.openCount)) return;
 
@@ -129,20 +151,38 @@ export class ExecutionEngine {
       };
     }
 
-    const judge = await callJudgeModel(judgeInput);
+    const judgeModel =
+      backtest?.judgeModel ??
+      (backtest ? env.judgeModelBacktest : undefined);
+
+    const judge = backtest?.skipJudge
+      ? {
+          approve: false,
+          confidence: 0,
+          reasoning: "skipJudge: technicals only",
+        }
+      : await callJudgeModel(judgeInput, { model: judgeModel });
+
     const snap = normalizeSnapshot(hit.snapshot);
+    const entryTime = backtest?.simulatedAt ?? new Date();
 
     const doc: TradeLogDoc = {
       ticker,
-      entry_time: new Date(),
+      entry_time: entryTime,
       strategy: hit.strategy as StrategyId,
-      env: env.executionEnv,
+      env: backtest ? "PAPER" : env.executionEnv,
       technical_snapshot: snap,
       ai_confidence: judge.confidence,
       ai_reasoning: judge.reasoning,
+      ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
     };
 
-    if (judge.approve && checkSafety(this.safety, this.openCount)) {
+    const doOrder =
+      judge.approve &&
+      checkSafety(this.safety, this.openCount) &&
+      !backtest?.skipOrders;
+
+    if (doOrder) {
       const side =
         hit.strategy === "MEAN_REV_Z"
           ? (snap.z_score_vwap ?? 0) > 0
@@ -158,7 +198,11 @@ export class ExecutionEngine {
       this.openCount += 1;
     }
 
-    await insertTrade(doc);
+    if (backtest?.persistBacktest) {
+      await insertBacktestTrade(doc);
+    } else if (!backtest) {
+      await insertTrade(doc);
+    }
   }
 }
 

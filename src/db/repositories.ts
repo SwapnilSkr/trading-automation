@@ -2,6 +2,7 @@ import type { Collection, Document } from "mongodb";
 import { collections, getDb } from "./mongo.js";
 import type {
   LessonLearnedDoc,
+  NewsArchiveDoc,
   NewsContextDoc,
   Ohlc1m,
   TradeLogDoc,
@@ -26,6 +27,13 @@ export async function ensureIndexes(): Promise<void> {
 
   const news = await col<NewsContextDoc>(collections.news);
   await news.createIndex({ date: -1 }, { unique: true });
+
+  const newsArchive = await col<NewsArchiveDoc>(collections.newsArchive);
+  await newsArchive.createIndex({ ts: -1 });
+
+  const tradesBt = await col<TradeLogDoc>(collections.tradesBacktest);
+  await tradesBt.createIndex({ entry_time: -1 });
+  await tradesBt.createIndex({ backtest_run_id: 1 });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {
@@ -56,6 +64,49 @@ export async function fetchOhlcRange(
 export async function insertTrade(doc: TradeLogDoc): Promise<void> {
   const c = await col<TradeLogDoc>(collections.trades);
   await c.insertOne(doc);
+}
+
+export async function insertBacktestTrade(doc: TradeLogDoc): Promise<void> {
+  const c = await col<TradeLogDoc>(collections.tradesBacktest);
+  await c.insertOne(doc);
+}
+
+export async function fetchNewsArchiveHeadlinesBeforeOrAt(
+  sim: Date,
+  limitDocs = 40
+): Promise<string[]> {
+  const c = await col<NewsArchiveDoc>(collections.newsArchive);
+  const docs = await c
+    .find({ ts: { $lte: sim } })
+    .sort({ ts: -1 })
+    .limit(limitDocs)
+    .toArray();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const d of docs) {
+    for (const h of d.headlines ?? []) {
+      if (seen.has(h)) continue;
+      seen.add(h);
+      out.push(h);
+      if (out.length >= 30) return out;
+    }
+  }
+  return out;
+}
+
+export async function bulkInsertNewsArchive(
+  rows: NewsArchiveDoc[]
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const c = await col<NewsArchiveDoc>(collections.newsArchive);
+  try {
+    const r = await c.insertMany(rows, { ordered: false });
+    return r.insertedCount;
+  } catch (e: unknown) {
+    const err = e as { insertedCount?: number };
+    if (typeof err.insertedCount === "number") return err.insertedCount;
+    throw e;
+  }
 }
 
 export async function tradesForDay(istDate: string): Promise<TradeLogDoc[]> {

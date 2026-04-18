@@ -33,6 +33,12 @@ export const env = {
   openRouterApiKey: () => process.env.OPENROUTER_API_KEY ?? "",
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   judgeModel: process.env.JUDGE_MODEL ?? "deepseek/deepseek-chat",
+  /** Cheaper model for `bun run backtest` (OpenRouter slug, e.g. Gemini Flash) */
+  judgeModelBacktest:
+    process.env.JUDGE_MODEL_BACKTEST ?? "google/gemini-2.0-flash-001",
+  /** Optional path to `historical_news.json` for replay */
+  historicalNewsPath:
+    process.env.HISTORICAL_NEWS_PATH ?? "data/historical_news.json",
 
   angelApiKey: process.env.ANGEL_API_KEY ?? "",
   /** Dashboard secret (UUID); REST login uses API key + PIN + TOTP per SmartAPI docs */

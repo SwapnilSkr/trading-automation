@@ -46,6 +46,25 @@ REST paths follow the official SDK map ([`config/api.js`](https://github.com/ang
 
 See `src/config/env.ts` for the full list and defaults.
 
+### Historical news (backtest / replay)
+
+- **File:** `data/historical_news.json` (or set `HISTORICAL_NEWS_PATH`) — array of `{ "ts": "ISO-8601", "headlines": ["..."] }` and/or `{ "date": "YYYY-MM-DD", "headlines": [...] }` (interpreted in IST).
+- **Mongo:** collection `news_archive` with `{ ts, headlines[] }`. Seed with:
+  `bun run backtest -- --import-news data/historical_news.json`
+- At each simulated time, replay uses headlines from **JSON + Mongo** with `ts <= simulated moment`.
+
+### Time Machine backtest (Path A)
+
+Replay stored `ohlc_1m` bar-by-bar with a **simulated clock** (weekday sessions 09:15–15:29 IST). Does **not** use the live daemon’s `currentRunMode()`. Writes optional rows to **`trades_backtest`** with `backtest_run_id`. Broker orders are **skipped by default** (stub only).
+
+```bash
+# Requires Mongo populated (e.g. sync-history / Angel historical API)
+bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBANK,ICICIBANK --step 15
+```
+
+- **`JUDGE_MODEL_BACKTEST`** — default `google/gemini-2.0-flash-001` on OpenRouter (cheap replay).
+- Flags: `--skip-judge`, `--no-persist`, `--judge-model <slug>`, `--allow-broker-orders` (unsafe).
+
 ## Scripts
 
 | Command | Description |
@@ -57,6 +76,7 @@ See `src/config/env.ts` for the full list and defaults.
 | `bun run analyst` | Post-mortem + `lessons_learned` |
 | `bun run sync-history` | OHLC upsert job (needs SmartAPI credentials + `TOTP_SEED`) |
 | `bun run weekend-optimize` | Mine patterns → Pinecone + sample hybrid replay |
+| `bun run backtest -- --from … --to …` | Time Machine replay (Mongo OHLC + historical news) |
 
 ## PM2 (production-style)
 

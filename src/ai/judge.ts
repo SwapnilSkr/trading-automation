@@ -15,8 +15,12 @@ export interface JudgeResult {
   approve: boolean;
 }
 
-export async function callJudgeModel(input: JudgeInput): Promise<JudgeResult> {
+export async function callJudgeModel(
+  input: JudgeInput,
+  options?: { model?: string }
+): Promise<JudgeResult> {
   const key = env.openRouterApiKey();
+  const model = options?.model ?? env.judgeModel;
   const system = `You are a risk-aware intraday trading judge for Indian equities.
 Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasoning":"string"}`;
 
@@ -48,7 +52,7 @@ Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasonin
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: env.judgeModel,
+      model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },

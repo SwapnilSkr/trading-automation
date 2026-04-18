@@ -35,12 +35,21 @@ export interface TradeLogDoc extends Document {
   technical_snapshot: TechnicalSnapshot;
   ai_confidence: number;
   ai_reasoning: string;
+  /** Set on rows written to `trades_backtest` */
+  backtest_run_id?: string;
   result?: {
     pnl: number;
     slippage: number;
     outcome: TradeOutcome;
     pnl_percent?: number;
   };
+}
+
+/** Time-stamped headlines for replay (`news_archive` collection or JSON file) */
+export interface NewsArchiveDoc extends Document {
+  ts: Date;
+  headlines: string[];
+  source?: string;
 }
 
 export interface LessonLearnedDoc extends Document {
