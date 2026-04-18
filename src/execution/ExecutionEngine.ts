@@ -1,7 +1,11 @@
 import { env } from "../config/env.js";
 import type { BrokerClient } from "../broker/types.js";
 import type { Ohlc1m, StrategyId, TechnicalSnapshot, TradeLogDoc } from "../types/domain.js";
-import { callJudgeModel, type JudgeInput } from "../ai/judge.js";
+import {
+  callJudgeModel,
+  type JudgeInput,
+  type JudgeResult,
+} from "../ai/judge.js";
 import { embedCandlePattern } from "../embeddings/patternEmbedding.js";
 import {
   querySimilarPatterns,
@@ -39,6 +43,8 @@ export interface BacktestPassOptions {
 export class ExecutionEngine {
   private safety: SafetyState = createSafetyState();
   private openCount = 0;
+  /** Live: last time we ran judge or Pinecone gate for this ticker */
+  private lastJudgeByTicker = new Map<string, number>();
 
   constructor(private broker: BrokerClient) {}
 
@@ -110,6 +116,14 @@ export class ExecutionEngine {
   ): Promise<void> {
     if (!checkSafety(this.safety, this.openCount)) return;
 
+    const nowMs = backtest?.simulatedAt.getTime() ?? Date.now();
+    if (
+      !backtest &&
+      nowMs - (this.lastJudgeByTicker.get(ticker) ?? 0) < env.judgeCooldownMs
+    ) {
+      return;
+    }
+
     const vector = await embedCandlePattern(ctx.sessionCandles);
     const neighbors = await querySimilarPatterns(vector, 8);
     const mem = scoreFromNeighbors(neighbors, 0.72);
@@ -155,13 +169,36 @@ export class ExecutionEngine {
       backtest?.judgeModel ??
       (backtest ? env.judgeModelBacktest : undefined);
 
-    const judge = backtest?.skipJudge
-      ? {
-          approve: false,
-          confidence: 0,
-          reasoning: "skipJudge: technicals only",
-        }
-      : await callJudgeModel(judgeInput, { model: judgeModel });
+    const top = neighbors[0];
+    const pineconeGate =
+      !backtest &&
+      env.pineconeGateEnabled &&
+      top !== undefined &&
+      top.score >= env.pineconeGateMinScore &&
+      top.meta.outcome === "WIN";
+
+    let judge: JudgeResult;
+    if (backtest?.skipJudge) {
+      judge = {
+        approve: false,
+        confidence: 0,
+        reasoning: "skipJudge: technicals only",
+      };
+    } else if (pineconeGate) {
+      judge = {
+        approve: true,
+        confidence: Math.min(0.99, top.score),
+        reasoning: `PINECONE_MATCH id=${top.id} score=${top.score.toFixed(
+          4
+        )} outcome=${top.meta.outcome}`,
+      };
+    } else {
+      judge = await callJudgeModel(judgeInput, { model: judgeModel });
+    }
+
+    if (!backtest) {
+      this.lastJudgeByTicker.set(ticker, nowMs);
+    }
 
     const snap = normalizeSnapshot(hit.snapshot);
     const entryTime = backtest?.simulatedAt ?? new Date();

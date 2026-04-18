@@ -62,4 +62,11 @@ export const env = {
   healthPort: num("HEALTH_PORT", 3000),
 
   niftySymbol: process.env.NIFTY_BENCHMARK_TICKER ?? "NIFTY50",
+
+  /** Min ms between judge (or Pinecone-gate) decisions per ticker — live only */
+  judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 15 * 60 * 1000),
+
+  /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
+  pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
+  pineconeGateMinScore: num("PINECONE_GATE_MIN_SCORE", 0.98),
 };
