@@ -1,5 +1,7 @@
 import type { Collection, Document } from "mongodb";
 import { collections, getDb } from "./mongo.js";
+import { DateTime } from "luxon";
+import { IST } from "../time/ist.js";
 import type {
   ActiveWatchlistDoc,
   LessonLearnedDoc,
@@ -7,6 +9,7 @@ import type {
   NewsContextDoc,
   Ohlc1m,
   TradeLogDoc,
+  WatchlistSnapshotDoc,
 } from "../types/domain.js";
 
 export type { PerformerScoreRow } from "../types/domain.js";
@@ -40,6 +43,9 @@ export async function ensureIndexes(): Promise<void> {
 
   const aw = await col<ActiveWatchlistDoc>(collections.activeWatchlist);
   await aw.createIndex({ updated_at: -1 });
+
+  const ws = await col<WatchlistSnapshotDoc>(collections.watchlistSnapshots);
+  await ws.createIndex({ effective_date: 1 }, { unique: true });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {
@@ -154,4 +160,50 @@ export async function upsertSessionWatchlist(
 export async function getSessionWatchlist(): Promise<ActiveWatchlistDoc | null> {
   const c = await col<ActiveWatchlistDoc>(collections.activeWatchlist);
   return c.findOne({ _id: "current_session" });
+}
+
+/** Mean total cash volume per session over the last `sessionDays` IST days before `before` (exclusive). */
+export async function averageDailyVolumeBefore(
+  ticker: string,
+  before: Date,
+  sessionDays = 5
+): Promise<number | undefined> {
+  const c = await col<Ohlc1m>(collections.ohlc1m);
+  const lookbackStart = DateTime.fromJSDate(before, { zone: IST })
+    .minus({ days: sessionDays * 3 })
+    .toJSDate();
+  const bars = await c
+    .find({ ticker, ts: { $gte: lookbackStart, $lt: before } })
+    .sort({ ts: -1 })
+    .limit(5000)
+    .toArray();
+  if (bars.length === 0) return undefined;
+  const byDay = new Map<string, number>();
+  for (const b of bars) {
+    const day = DateTime.fromJSDate(b.ts, { zone: IST }).toFormat("yyyy-MM-dd");
+    byDay.set(day, (byDay.get(day) ?? 0) + b.v);
+  }
+  const sortedDays = [...byDay.entries()].sort((a, b) =>
+    b[0].localeCompare(a[0])
+  );
+  const slice = sortedDays.slice(0, sessionDays);
+  if (slice.length === 0) return undefined;
+  const sum = slice.reduce((s, [, vol]) => s + vol, 0);
+  return sum / slice.length;
+}
+
+export async function upsertWatchlistSnapshot(
+  doc: WatchlistSnapshotDoc
+): Promise<void> {
+  const c = await col<WatchlistSnapshotDoc>(collections.watchlistSnapshots);
+  await c.replaceOne({ effective_date: doc.effective_date }, doc, {
+    upsert: true,
+  });
+}
+
+export async function getWatchlistSnapshotForEffectiveDate(
+  effectiveDate: string
+): Promise<WatchlistSnapshotDoc | null> {
+  const c = await col<WatchlistSnapshotDoc>(collections.watchlistSnapshots);
+  return c.findOne({ effective_date: effectiveDate });
 }

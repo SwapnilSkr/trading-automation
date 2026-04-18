@@ -31,6 +31,10 @@ function parseArgs(): Record<string, string | boolean> {
       out["use-active-watchlist"] = true;
       continue;
     }
+    if (k === "--watchlist-snapshots") {
+      out["watchlist-snapshots"] = true;
+      continue;
+    }
     if (k?.startsWith("--")) {
       const key = k.slice(2);
       const val = a[i + 1];
@@ -79,7 +83,9 @@ async function main(): Promise<void> {
 
 Options:
   --tickers RELIANCE,TCS,INFY   (default: WATCHED_TICKERS from .env)
-  --use-active-watchlist        use tickers from Mongo active_watchlist (run discovery-sync first)
+  --use-active-watchlist        use tickers from Mongo active_watchlist (single list; lookahead bias)
+  --watchlist-snapshots         per-session tickers from watchlist_snapshots (no-lookahead; seed via discovery-sync --to)
+  --tickers-fallback A,B        with --watchlist-snapshots, used when a date has no snapshot
   --step 15                     minutes between simulated scans (default: 15)
   --judge-model <openrouter>    override JUDGE_MODEL_BACKTEST
   --skip-judge                  no LLM calls (technicals only path still evaluates)
@@ -93,6 +99,13 @@ Options:
   await ensureIndexes();
 
   let tickers: string[];
+  const snapshotMode = args["watchlist-snapshots"] === true;
+  if (args["use-active-watchlist"] === true && snapshotMode) {
+    console.error(
+      "[backtest] use only one of --use-active-watchlist or --watchlist-snapshots"
+    );
+    process.exit(1);
+  }
   if (args["use-active-watchlist"] === true) {
     const doc = await getSessionWatchlist();
     if (!doc?.tickers?.length) {
@@ -107,6 +120,14 @@ Options:
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+  } else if (
+    typeof args["tickers-fallback"] === "string" &&
+    args["tickers-fallback"].length
+  ) {
+    tickers = String(args["tickers-fallback"])
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   } else {
     tickers = (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY")
       .split(",")
@@ -115,7 +136,13 @@ Options:
 
   const stepMinutes = Math.max(1, parseInt(String(args.step ?? "15"), 10) || 15);
 
-  console.log("[backtest] replay", { from, to, tickers, stepMinutes });
+  console.log("[backtest] replay", {
+    from,
+    to,
+    tickers,
+    stepMinutes,
+    watchlistMode: snapshotMode ? "snapshots" : "static",
+  });
 
   const summary = await runBacktestReplay({
     from,
@@ -129,6 +156,7 @@ Options:
     skipJudge: args["skip-judge"] === true,
     skipOrders: args["allow-broker-orders"] !== true,
     persistTrades: args["no-persist"] !== true,
+    watchlistMode: snapshotMode ? "snapshots" : "static",
   });
 
   console.log("[backtest] done", summary);

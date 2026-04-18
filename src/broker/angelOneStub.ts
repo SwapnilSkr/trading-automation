@@ -1,6 +1,10 @@
 import { env } from "../config/env.js";
 import type { Ohlc1m } from "../types/domain.js";
-import type { BrokerClient, BrokerPosition } from "./types.js";
+import type {
+  BrokerClient,
+  BrokerPosition,
+  MarketQuoteFullRow,
+} from "./types.js";
 
 /**
  * Angel One SmartAPI integration placeholder.
@@ -36,6 +40,10 @@ export class AngelOneStubBroker implements BrokerClient {
     _from: Date,
     _to: Date
   ): Promise<Ohlc1m[]> {
+    return [];
+  }
+
+  async fetchMarketQuotesFull(_tickers: string[]): Promise<MarketQuoteFullRow[]> {
     return [];
   }
 

@@ -58,6 +58,20 @@ export const env = {
   /** Extra pause between tickers during `sync-history` */
   angelSyncTickerGapMs: num("ANGEL_SYNC_TICKER_GAP_MS", 800),
 
+  /** Pause between Angel `/quote` batches (≤50 symbols each, ~1 rps) */
+  quoteBatchDelayMs: num("QUOTE_BATCH_DELAY_MS", 1100),
+
+  /** Run discovery-sync once per weekday ~18:00 IST (POST_MORTEM window) */
+  nightlyDiscoveryEnabled: process.env.NIGHTLY_DISCOVERY !== "false",
+
+  /** Pre-open pivot during INIT (~9:10 IST): quotes + gap/volume filter */
+  preopenPivotEnabled: process.env.PREOPEN_PIVOT !== "false",
+  preopenJudgeEnabled: process.env.PREOPEN_JUDGE === "true",
+  preopenMinAbsGapPct: num("PREOPEN_MIN_ABS_GAP_PCT", 1.5),
+  preopenMinVolVsAvg: num("PREOPEN_MIN_VOL_VS_AVG", 0.2),
+  preopenMaxCandidates: num("PREOPEN_MAX_CANDIDATES", 50),
+  preopenMaxPicks: num("PREOPEN_MAX_PICKS", 10),
+
   dailyStopLoss: num("DAILY_STOP_LOSS", 25_000),
   maxConcurrentTrades: num("MAX_CONCURRENT_TRADES", 3),
   executionEnv: (process.env.EXECUTION_ENV ?? "PAPER") as "PAPER" | "LIVE",

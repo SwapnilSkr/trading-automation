@@ -1,7 +1,11 @@
 import { DateTime } from "luxon";
 import { env } from "../config/env.js";
 import type { Ohlc1m } from "../types/domain.js";
-import type { BrokerClient, BrokerPosition } from "./types.js";
+import type {
+  BrokerClient,
+  BrokerPosition,
+  MarketQuoteFullRow,
+} from "./types.js";
 import { SmartApiPaths } from "./smartApi/endpoints.js";
 import { SmartApiHttp, decodeJwtExpMs, type SmartApiJson } from "./smartApi/http.js";
 import { generateTotpCode } from "./smartApi/totp.js";
@@ -220,6 +224,54 @@ export class AngelOneBroker implements BrokerClient {
     return dedupeSortOhlc(rows);
   }
 
+  async fetchMarketQuotesFull(tickers: string[]): Promise<MarketQuoteFullRow[]> {
+    const uniq = [
+      ...new Set(
+        tickers.map((t) => t.replace(/-EQ$/i, "").trim().toUpperCase())
+      ),
+    ].filter(Boolean);
+    if (uniq.length === 0) return [];
+
+    const token = await this.authorized();
+    const tokenToTicker = new Map<string, string>();
+    for (const t of uniq) {
+      const { symboltoken } = await this.resolveEquitySymbol(t, token);
+      tokenToTicker.set(symboltoken, t);
+    }
+
+    const tokens = [...tokenToTicker.keys()];
+    const batches: string[][] = [];
+    for (let i = 0; i < tokens.length; i += 50) {
+      batches.push(tokens.slice(i, i + 50));
+    }
+
+    const out: MarketQuoteFullRow[] = [];
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi]!;
+      const res = await this.http.post(
+        SmartApiPaths.marketQuote,
+        {
+          mode: "FULL",
+          exchangeTokens: { [env.angelExchange]: batch },
+        },
+        token
+      );
+
+      if (res.status !== true) {
+        const msg =
+          typeof res.message === "string" ? res.message : JSON.stringify(res);
+        console.warn(`[Angel] marketQuote: ${msg}`);
+      } else {
+        out.push(...parseQuoteFetched(res.data, tokenToTicker));
+      }
+
+      if (bi < batches.length - 1 && env.quoteBatchDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, env.quoteBatchDelayMs));
+      }
+    }
+    return out;
+  }
+
   private async resolveEquitySymbol(
     baseTicker: string,
     token: string
@@ -358,6 +410,59 @@ export class AngelOneBroker implements BrokerClient {
     }
     return out;
   }
+}
+
+function quoteNum(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function extractQuoteFetchedArray(data: unknown): unknown[] {
+  if (data === null || typeof data !== "object") return [];
+  const d = data as Record<string, unknown>;
+  if (Array.isArray(d.fetched)) return d.fetched;
+  const inner = d.data;
+  if (
+    inner !== null &&
+    typeof inner === "object" &&
+    Array.isArray((inner as Record<string, unknown>).fetched)
+  ) {
+    return (inner as { fetched: unknown[] }).fetched;
+  }
+  return [];
+}
+
+function parseQuoteFetched(
+  data: unknown,
+  tokenToTicker: Map<string, string>
+): MarketQuoteFullRow[] {
+  const fetched = extractQuoteFetchedArray(data);
+  const rows: MarketQuoteFullRow[] = [];
+  for (const item of fetched) {
+    if (item === null || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const st = String(o.symbolToken ?? o.symboltoken ?? "");
+    const sym = String(o.tradingSymbol ?? o.tradingsymbol ?? "").replace(
+      /-EQ$/i,
+      ""
+    );
+    const ticker = (st && tokenToTicker.get(st)) || sym;
+    if (!ticker) continue;
+    rows.push({
+      ticker,
+      open: quoteNum(o.open),
+      close: quoteNum(o.close),
+      ltp: quoteNum(o.ltp) ?? quoteNum(o.last_traded_price),
+      tradeVolume:
+        quoteNum(o.tradeVolume) ??
+        quoteNum(o.totTrdVol) ??
+        quoteNum(o.volume),
+      tradingSymbol: String(o.tradingSymbol ?? o.tradingsymbol ?? ""),
+      symbolToken: st,
+    });
+  }
+  return rows;
 }
 
 function parseCandlePayload(

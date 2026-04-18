@@ -6,7 +6,10 @@ import {
   ExecutionEngine,
   type BacktestPassOptions,
 } from "../execution/ExecutionEngine.js";
-import { fetchOhlcRange } from "../db/repositories.js";
+import {
+  fetchOhlcRange,
+  getWatchlistSnapshotForEffectiveDate,
+} from "../db/repositories.js";
 import { getHeadlinesForBacktest } from "../services/historicalNewsFeed.js";
 import type { Ohlc1m } from "../types/domain.js";
 import { IST, isIndianWeekday } from "../time/ist.js";
@@ -21,6 +24,12 @@ export interface BacktestConfig {
   /** When true, never calls broker (recommended for replay) */
   skipOrders: boolean;
   persistTrades: boolean;
+  /**
+   * `static` — use `tickers` every session.
+   * `snapshots` — for each IST session day, load `watchlist_snapshots.effective_date`;
+   *   if missing, use `tickers` as fallback.
+   */
+  watchlistMode?: "static" | "snapshots";
 }
 
 export interface BacktestSummary {
@@ -90,7 +99,23 @@ export async function runBacktestReplay(
     const dayStart = d.startOf("day").toJSDate();
     const dayEnd = d.endOf("day").toJSDate();
 
-    for (const ticker of config.tickers) {
+    const dayKey = d.toFormat("yyyy-MM-dd");
+    let dayTickers = config.tickers;
+    if (config.watchlistMode === "snapshots") {
+      const snap = await getWatchlistSnapshotForEffectiveDate(dayKey);
+      if (snap?.tickers?.length) {
+        dayTickers = snap.tickers;
+        console.log(
+          `[Backtest] ${dayKey} watchlist from snapshot (${dayTickers.length} names)`
+        );
+      } else {
+        console.warn(
+          `[Backtest] ${dayKey} no watchlist_snapshots — fallback static list`
+        );
+      }
+    }
+
+    for (const ticker of dayTickers) {
       const broker = config.skipOrders
         ? new AngelOneStubBroker()
         : createBroker();

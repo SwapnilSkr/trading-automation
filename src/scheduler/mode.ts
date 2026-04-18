@@ -1,5 +1,10 @@
 import { DateTime } from "luxon";
-import { IST, isIndianWeekday, nowIST } from "../time/ist.js";
+import {
+  IST,
+  isIndianWeekday,
+  minutesSinceMidnightIST,
+  nowIST,
+} from "../time/ist.js";
 
 export type RunMode =
   | "INIT"
@@ -10,10 +15,6 @@ export type RunMode =
   | "POST_MORTEM"
   | "IDLE";
 
-function minutesSinceMidnight(dt: DateTime): number {
-  return dt.hour * 60 + dt.minute;
-}
-
 /**
  * Maps current IST clock to coarse regime (see Alpha Architect schedule).
  */
@@ -22,7 +23,7 @@ export function currentRunMode(now: DateTime = nowIST()): RunMode {
     return "IDLE";
   }
 
-  const m = minutesSinceMidnight(now);
+  const m = minutesSinceMidnightIST(now);
 
   if (m < 9 * 60) return "IDLE";
   if (m < 9 * 60 + 15) return "INIT";
@@ -37,5 +38,5 @@ export function currentRunMode(now: DateTime = nowIST()): RunMode {
 }
 
 export function describeMode(mode: RunMode): string {
-  return `${mode} @ ${DateTime.now().setZone(IST).toFormat("HH:mm:ss")} IST`;
+  return `${mode} @ ${nowIST().toFormat("HH:mm:ss")} IST`;
 }

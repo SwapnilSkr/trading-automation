@@ -1,15 +1,19 @@
 import type { BrokerClient } from "../broker/types.js";
 import { env } from "../config/env.js";
-import { upsertSessionWatchlist } from "../db/repositories.js";
+import {
+  upsertSessionWatchlist,
+  upsertWatchlistSnapshot,
+} from "../db/repositories.js";
 import { metricsFromDailyBars } from "../discovery/performerScore.js";
 import { loadNifty100Symbols } from "../discovery/niftyUniverse.js";
 import type {
   ActiveWatchlistDoc,
   PerformerScoreRow,
+  WatchlistSnapshotDoc,
 } from "../types/domain.js";
 import { syncOhlcForRange } from "./marketSync.js";
 import { DateTime } from "luxon";
-import { IST, nowIST } from "../time/ist.js";
+import { IST, nextIndianWeekdayAfter, nowIST } from "../time/ist.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -21,12 +25,23 @@ export interface DiscoverySyncOptions {
   refreshUniverseCsv: boolean;
   skipOhlcSync: boolean;
   dryRun: boolean;
+  /** IST yyyy-MM-dd — scoring window ends this calendar day (default: today) */
+  asOfDate?: string;
+  /** IST yyyy-MM-dd — watchlist applies to this session (default: next weekday after asOf) */
+  effectiveForDate?: string;
+  /** Write `current_session` (default true) */
+  updateCurrentSession?: boolean;
+  /** Write `watchlist_snapshots` (default true when not dry-run) */
+  writeSnapshot?: boolean;
+  snapshotSource?: string;
 }
 
 export interface DiscoverySyncResult {
   universeSize: number;
   scored: number;
   performers: PerformerScoreRow[];
+  effectiveFor?: string;
+  asOf?: string;
   ohlc?: { ticker: string; bars: number }[];
 }
 
@@ -41,11 +56,28 @@ export async function runDiscoverySync(
     throw new Error("Nifty 100 symbol list is empty");
   }
 
-  const end = nowIST().endOf("day").toJSDate();
-  const start = DateTime.fromJSDate(end, { zone: IST })
+  const asOf = opts.asOfDate
+    ? DateTime.fromISO(opts.asOfDate, { zone: IST })
+    : nowIST();
+  if (!asOf.isValid) {
+    throw new Error(`Invalid asOfDate (use YYYY-MM-DD IST): ${opts.asOfDate}`);
+  }
+
+  const end = asOf.endOf("day").toJSDate();
+  const start = asOf
     .minus({ days: opts.days + 10 })
     .startOf("day")
     .toJSDate();
+
+  const effectiveDt = opts.effectiveForDate
+    ? DateTime.fromISO(opts.effectiveForDate, { zone: IST })
+    : nextIndianWeekdayAfter(asOf);
+  if (!effectiveDt.isValid) {
+    throw new Error(
+      `Invalid effectiveForDate: ${opts.effectiveForDate}`
+    );
+  }
+  const effectiveIso = effectiveDt.toFormat("yyyy-MM-dd");
 
   const metricsList: PerformerScoreRow[] = [];
   let scored = 0;
@@ -72,22 +104,45 @@ export async function runDiscoverySync(
   metricsList.sort((a, b) => b.score - a.score);
   const performers = metricsList.slice(0, opts.top);
 
+  const updateSession = opts.updateCurrentSession !== false;
+  const writeSnap =
+    opts.writeSnapshot !== false && opts.dryRun !== true;
+
   if (opts.dryRun) {
-    return { universeSize: symbols.length, scored, performers };
+    return {
+      universeSize: symbols.length,
+      scored,
+      performers,
+      effectiveFor: effectiveIso,
+      asOf: asOf.toFormat("yyyy-MM-dd"),
+    };
   }
 
-  const sessionDoc: ActiveWatchlistDoc = {
-    _id: "current_session",
-    tickers: performers.map((p) => p.ticker),
-    updated_at: new Date(),
-    source: "discovery_nifty100",
-    performers,
-  };
-  await upsertSessionWatchlist(sessionDoc);
+  if (writeSnap) {
+    const snap: WatchlistSnapshotDoc = {
+      effective_date: effectiveIso,
+      tickers: performers.map((p) => p.ticker),
+      source: opts.snapshotSource ?? "discovery_nifty100",
+      performers,
+      created_at: new Date(),
+    };
+    await upsertWatchlistSnapshot(snap);
+  }
+
+  if (updateSession) {
+    const sessionDoc: ActiveWatchlistDoc = {
+      _id: "current_session",
+      tickers: performers.map((p) => p.ticker),
+      updated_at: new Date(),
+      source: opts.snapshotSource ?? "discovery_nifty100",
+      performers,
+    };
+    await upsertSessionWatchlist(sessionDoc);
+  }
 
   let ohlc: { ticker: string; bars: number }[] | undefined;
   if (!opts.skipOhlcSync && performers.length > 0) {
-    const ohlcFrom = DateTime.fromJSDate(end, { zone: IST })
+    const ohlcFrom = asOf
       .minus({ days: opts.days })
       .startOf("day")
       .toJSDate();
@@ -99,5 +154,12 @@ export async function runDiscoverySync(
     );
   }
 
-  return { universeSize: symbols.length, scored, performers, ohlc };
+  return {
+    universeSize: symbols.length,
+    scored,
+    performers,
+    effectiveFor: effectiveIso,
+    asOf: asOf.toFormat("yyyy-MM-dd"),
+    ohlc,
+  };
 }

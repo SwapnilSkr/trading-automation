@@ -70,9 +70,10 @@ curl -X POST http://127.0.0.1:3000/v1/emergency/square-off \
 ### Data management (Mongo OHLC)
 
 - **`bun run sync-history --days 5`** — Backfills `ohlc_1m` for **`WATCHED_TICKERS`** (IST day window ending today). Use **`--ticker RELIANCE`** or **`--tickers A,B`** to narrow the list. Optional **`--from` / `--to`** (`YYYY-MM-DD`, IST) for an explicit range. Expect **no rows** for NSE holidays and weekends; indicators use **consecutive bars** only, not calendar-filled flat prices between sessions.
-- **`bun run discovery-sync --days 5 --top 10`** — Loads **Nifty 100** from bundled `data/ind_nifty100list.csv` (optional **`--refresh-universe`** to re-download from NSE). For each name, one **`ONE_DAY`** `getCandleData` call, then scores **|5-session % change| × volume ratio**, keeps top **N**, upserts Mongo **`active_watchlist`** (`_id: current_session`), then **`ohlc_1m`** sync for those tickers only (skip with **`--skip-ohlc`**). Uses **`DISCOVERY_SYMBOL_DELAY_MS`** (default **2000**) between symbols to reduce Angel **403** rate limits. **`--dry-run`** prints rankings without Mongo/OHLC writes.
-- **`TRADING_TICKER_SOURCE=active_watchlist`** — Daemon **`EXECUTION`**, **`SQUARE_OFF`**, and **`syncIntradayHistory`** use **`active_watchlist.current_session`** instead of **`WATCHED_TICKERS`** (falls back to env if the doc is missing).
-- **Backtest:** **`--use-active-watchlist`** uses the current Mongo session list (for true point-in-time selection without look-ahead, you would store dated snapshots separately — not implemented yet).
+- **`bun run discovery-sync --days 5 --top 10`** — Loads **Nifty 100** from `data/ind_nifty100list.csv` (optional **`--refresh-universe`**). Scores with **`ONE_DAY`** candles through **`--to YYYY-MM-DD`** (default **today** IST); writes **`watchlist_snapshots`** for **`--effective-for`** (default **next Indian weekday** after `--to`). Updates **`active_watchlist.current_session`** unless **`--snapshot-only`**. Then **`ohlc_1m`** for winners (**`--skip-ohlc`** to skip). Throttles: **`DISCOVERY_SYMBOL_DELAY_MS`**, **`ANGEL_API_THROTTLE_MS`**, **`QUOTE_BATCH_DELAY_MS`** (quote batches).
+- **Automation (daemon):** During **`POST_MORTEM` (18:00–20:59 IST)**, if **`NIGHTLY_DISCOVERY`** is not `false`, runs **`runDiscoverySync`** once per calendar day (async; overlaps with optional PM2 **`nightly-discovery`** cron — disable one if redundant). During **`INIT`** at **≥09:10 IST**, if **`PREOPEN_PIVOT`** is not `false` and **`TRADING_TICKER_SOURCE=active_watchlist`**, runs **pre-open pivot**: Angel **`market/v1/quote`** (FULL), filters **`PREOPEN_MIN_ABS_GAP_PCT`** and session volume vs **`averageDailyVolumeBefore`** (**`PREOPEN_MIN_VOL_VS_AVG`**), optional **`PREOPEN_JUDGE=true`** (OpenRouter JSON pick). Updates **`current_session`** + snapshot for **today’s** `effective_date`.
+- **`TRADING_TICKER_SOURCE=active_watchlist`** — Uses **`active_watchlist.current_session`** for **`EXECUTION`**, **`SQUARE_OFF`**, **`syncIntradayHistory`** (fallback **`WATCHED_TICKERS`** if missing).
+- **Backtest:** **`--use-active-watchlist`** = single current session list (lookahead bias). **`--watchlist-snapshots`** = per simulated **session day**, load **`watchlist_snapshots.effective_date`**; use **`--tickers-fallback`** (or **`--tickers`**) when a date has no snapshot. Seed snapshots with historical **`discovery-sync --to <prior_session> --snapshot-only`** (or full) for each day you replay.
 - **`bun run analyst`** — Evening dual-call post-mortem (winners vs losers) into `lessons_learned`.
 
 ### Historical news (backtest / replay)
@@ -101,7 +102,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,HDFCBAN
 | `bun run dev` | Watch mode, main process |
 | `bun run start` | Run `src/index.ts` once (no watch) |
 | `bun run typecheck` | `tsc --noEmit` |
-| `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/weekend-optimize.js` for Node |
+| `bun run build` | Bundle `dist/index.js`, `dist/analyst.js`, `dist/sync-history.js`, `dist/discovery-sync.js`, `dist/weekend-optimize.js`, `dist/backtest.js` for Node |
 | `bun run analyst` | Post-mortem + `lessons_learned` |
 | `bun run sync-history` | OHLC upsert / backfill (see **Data management**; needs SmartAPI + `TOTP_SEED` for live Angel) |
 | `bun run discovery-sync` | Nifty 100 momentum scan → `active_watchlist` + optional 1m OHLC for top tickers |
@@ -115,7 +116,7 @@ bun run build
 pm2 start ecosystem.config.cjs
 ```
 
-Edit `ecosystem.config.cjs` and set `cwd` to this repo path. The bundle loads `.env` via `dotenv/config` in each entrypoint. The **evening-analyst** app uses a cron in **Asia/Kolkata**; adjust if your PM2 version or needs differ.
+Edit `ecosystem.config.cjs` and set `cwd` to this repo path. The bundle loads `.env` via `dotenv/config` in each entrypoint. Crons use **Asia/Kolkata**: **evening-analyst** (15:45), **nightly-discovery** (18:20, optional backup to in-process nightly discovery). Disable one nightly path if you want a single source.
 
 ## Pinecone agent docs
 

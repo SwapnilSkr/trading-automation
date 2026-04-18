@@ -88,3 +88,14 @@ export interface PerformerScoreRow {
   pct5d: number;
   volRatio: number;
 }
+
+/** Dated watchlist for no-lookahead backtests (`watchlist_snapshots`) */
+export interface WatchlistSnapshotDoc extends Document {
+  /** IST session date this list applies to (YYYY-MM-DD) */
+  effective_date: string;
+  tickers: string[];
+  source: string;
+  performers?: PerformerScoreRow[];
+  preopen_meta?: Record<string, unknown>;
+  created_at: Date;
+}

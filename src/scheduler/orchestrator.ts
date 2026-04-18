@@ -1,17 +1,29 @@
 import type { BrokerClient } from "../broker/types.js";
-import { ensureIndexes } from "../db/repositories.js";
+import {
+  ensureIndexes,
+  fetchOhlcRange,
+  getSessionWatchlist,
+} from "../db/repositories.js";
 import { ExecutionEngine } from "../execution/ExecutionEngine.js";
 import { fetchTodayNewsContext } from "../services/news.js";
 import { syncIntradayHistory } from "../services/marketSync.js";
-import { fetchOhlcRange } from "../db/repositories.js";
+import { runDiscoverySync } from "../services/discoveryRun.js";
+import { runPreopenPivot } from "../services/preopenPivot.js";
 import { env } from "../config/env.js";
-import { nowIST } from "../time/ist.js";
+import {
+  istDateString,
+  minutesSinceMidnightIST,
+  nowIST,
+} from "../time/ist.js";
 import { resolveWatchlistTickers } from "../services/watchlist.js";
 import { currentRunMode, describeMode, type RunMode } from "./mode.js";
 
 export class TradingOrchestrator {
   private lastMode: RunMode | null = null;
   private engine: ExecutionEngine;
+  private nightlyDiscoveryIstDay?: string;
+  private nightlyDiscoveryRunning = false;
+  private preopenPivotIstDay?: string;
 
   constructor(private broker: BrokerClient) {
     this.engine = new ExecutionEngine(broker);
@@ -34,6 +46,32 @@ export class TradingOrchestrator {
         await this.broker.authenticate();
         await this.broker.refreshSessionIfNeeded();
         await fetchTodayNewsContext();
+        const n = nowIST();
+        const d = istDateString(n);
+        const m = minutesSinceMidnightIST(n);
+        if (
+          env.preopenPivotEnabled &&
+          env.tradingTickerSource === "active_watchlist" &&
+          m >= 9 * 60 + 10 &&
+          this.preopenPivotIstDay !== d
+        ) {
+          this.preopenPivotIstDay = d;
+          try {
+            const session = await getSessionWatchlist();
+            const candidates = [
+              ...new Set([
+                ...(session?.tickers ?? []),
+                ...env.watchedTickers,
+              ]),
+            ];
+            const r = await runPreopenPivot(this.broker, candidates);
+            if (r) {
+              console.log("[Orchestrator] preopen pivot", r.tickers.join(","));
+            }
+          } catch (e) {
+            console.error("[Orchestrator] preopen pivot failed", e);
+          }
+        }
         break;
       }
       case "OBSERVATION": {
@@ -73,7 +111,44 @@ export class TradingOrchestrator {
         break;
       }
       case "POST_MORTEM": {
-        /* Heavy analysis runs in analyst.js (PM2 cron). */
+        const n2 = nowIST();
+        const d2 = istDateString(n2);
+        const m2 = minutesSinceMidnightIST(n2);
+        if (
+          env.nightlyDiscoveryEnabled &&
+          m2 >= 18 * 60 &&
+          m2 < 21 * 60 &&
+          this.nightlyDiscoveryIstDay !== d2 &&
+          !this.nightlyDiscoveryRunning
+        ) {
+          this.nightlyDiscoveryIstDay = d2;
+          this.nightlyDiscoveryRunning = true;
+          console.log("[Orchestrator] nightly discovery-sync starting");
+          void runDiscoverySync(this.broker, {
+            days: 5,
+            top: 10,
+            refreshUniverseCsv: false,
+            skipOhlcSync: false,
+            dryRun: false,
+            asOfDate: d2,
+            updateCurrentSession: true,
+            writeSnapshot: true,
+            snapshotSource: "nightly_discovery",
+          })
+            .then((res) => {
+              console.log(
+                "[Orchestrator] nightly discovery done",
+                res.effectiveFor,
+                res.performers.map((p) => p.ticker).join(",")
+              );
+            })
+            .catch((e) =>
+              console.error("[Orchestrator] nightly discovery failed", e)
+            )
+            .finally(() => {
+              this.nightlyDiscoveryRunning = false;
+            });
+        }
         break;
       }
       default:

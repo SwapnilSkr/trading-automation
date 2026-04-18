@@ -12,5 +12,7 @@ export const SmartApiPaths = {
   placeOrder: "/rest/secure/angelbroking/order/v1/placeOrder",
   getPosition: "/rest/secure/angelbroking/order/v1/getPosition",
   getCandleData: "/rest/secure/angelbroking/historical/v1/getCandleData",
+  /** Bulk quote — max ~50 tokens per request, respect ~1 rps */
+  marketQuote: "/rest/secure/angelbroking/market/v1/quote",
   searchScrip: "/rest/secure/angelbroking/order/v1/searchScrip",
 } as const;

@@ -1,11 +1,10 @@
 /**
  * Nifty 100 → score by 5-session % move × volume ratio → top N → Mongo + optional 1m OHLC sync.
  *
- * Rate limits: one ONE_DAY candle request per name + DISCOVERY_SYMBOL_DELAY_MS between names.
- *
  *   bun run discovery-sync --days 5 --top 10
- *   bun run discovery-sync --dry-run --top 15
- *   bun run discovery-sync --refresh-universe   # re-download Nifty 100 CSV from NSE
+ *   bun run discovery-sync --to 2026-04-17 --top 15
+ *   bun run discovery-sync --to 2026-04-17 --effective-for 2026-04-18
+ *   bun run discovery-sync --snapshot-only --to 2026-04-17   # only watchlist_snapshots, no current_session
  */
 import "dotenv/config";
 import { createBroker } from "../broker/factory.js";
@@ -18,6 +17,9 @@ function parseArgs(): {
   refreshUniverse: boolean;
   skipOhlc: boolean;
   dryRun: boolean;
+  to?: string;
+  effectiveFor?: string;
+  snapshotOnly: boolean;
 } {
   const argv = process.argv.slice(2);
   let days = 5;
@@ -25,6 +27,9 @@ function parseArgs(): {
   let refreshUniverse = false;
   let skipOhlc = false;
   let dryRun = false;
+  let to: string | undefined;
+  let effectiveFor: string | undefined;
+  let snapshotOnly = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -34,6 +39,14 @@ function parseArgs(): {
     }
     if (a === "--top" && argv[i + 1]) {
       top = Number(argv[++i]);
+      continue;
+    }
+    if (a === "--to" && argv[i + 1]) {
+      to = argv[++i];
+      continue;
+    }
+    if (a === "--effective-for" && argv[i + 1]) {
+      effectiveFor = argv[++i];
       continue;
     }
     if (a === "--refresh-universe") {
@@ -48,6 +61,10 @@ function parseArgs(): {
       dryRun = true;
       continue;
     }
+    if (a === "--snapshot-only") {
+      snapshotOnly = true;
+      continue;
+    }
   }
 
   if (!Number.isFinite(days) || days < 3) {
@@ -57,7 +74,16 @@ function parseArgs(): {
     throw new Error("--top must be at least 1");
   }
 
-  return { days, top, refreshUniverse, skipOhlc, dryRun };
+  return {
+    days,
+    top,
+    refreshUniverse,
+    skipOhlc,
+    dryRun,
+    to,
+    effectiveFor,
+    snapshotOnly,
+  };
 }
 
 async function main(): Promise<void> {
@@ -67,7 +93,7 @@ async function main(): Promise<void> {
   await broker.authenticate();
 
   console.log(
-    `[discovery-sync] universe=Nifty100 scoring=${opts.days}d top=${opts.top} dryRun=${opts.dryRun} skipOhlc=${opts.skipOhlc}`
+    `[discovery-sync] universe=Nifty100 scoring=${opts.days}d top=${opts.top} asOf=${opts.to ?? "today"} dryRun=${opts.dryRun}`
   );
 
   const result = await runDiscoverySync(broker, {
@@ -76,10 +102,14 @@ async function main(): Promise<void> {
     refreshUniverseCsv: opts.refreshUniverse,
     skipOhlcSync: opts.skipOhlc,
     dryRun: opts.dryRun,
+    asOfDate: opts.to,
+    effectiveForDate: opts.effectiveFor,
+    updateCurrentSession: !opts.snapshotOnly,
+    writeSnapshot: true,
   });
 
   console.log(
-    `[discovery-sync] scanned ${result.universeSize} names, scored ${result.scored}`
+    `[discovery-sync] scanned ${result.universeSize} names, scored ${result.scored}, effectiveFor=${result.effectiveFor} asOf=${result.asOf}`
   );
   for (const p of result.performers) {
     console.log(
@@ -93,7 +123,7 @@ async function main(): Promise<void> {
   }
   if (!opts.dryRun) {
     console.log(
-      "[discovery-sync] Mongo active_watchlist `current_session` updated. Set TRADING_TICKER_SOURCE=active_watchlist to trade this list."
+      "[discovery-sync] watchlist_snapshots updated. current_session updated unless --snapshot-only."
     );
   }
   console.log("[discovery-sync] done");
