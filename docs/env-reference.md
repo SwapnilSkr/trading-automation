@@ -1,0 +1,170 @@
+# Environment Variable Reference
+
+Full list of all `.env` variables, their defaults, and when to change them.
+
+---
+
+## Database
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Local or Atlas connection string |
+| `MONGODB_DB` | `trading-automation` | Database name |
+
+---
+
+## Pinecone (pattern memory)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `PINECONE_API_KEY` | — | Required |
+| `PINECONE_INDEX` | `trading-patterns` | Index must exist: cosine, 1536 dims |
+| `PINECONE_NAMESPACE` | `golden-patterns` | Namespace within index |
+
+---
+
+## Embeddings
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `OPENAI_API_KEY` | — | For `text-embedding-3-small` (1536-dim) |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Any OpenAI-compatible 1536-dim model |
+| `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | Override for local embeddings |
+
+If no API key: falls back to a deterministic FNV hash-seeded vector (no real embeddings, Pinecone gate won't work meaningfully).
+
+---
+
+## Judge LLM (OpenRouter)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `OPENROUTER_API_KEY` | — | Required for live judge |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for local LLM |
+| `JUDGE_MODEL` | `deepseek/deepseek-chat` | Live judge (~$0.001/call) |
+| `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
+| `JUDGE_COOLDOWN_MS` | `900000` (15 min) | Min time between judge calls per ticker in live mode |
+| `PINECONE_GATE_ENABLED` | `true` | Auto-approve from Pinecone without LLM if top match ≥ threshold |
+| `PINECONE_GATE_MIN_SCORE` | `0.98` | Cosine similarity threshold for auto-approval |
+
+**Cost estimation (live):** With 5 tickers, 6.5h session, 15-min cooldown → max 13 judge calls per ticker → 65 calls/day. At $0.001 = **$0.065/day**. After weekend-optimize fills Pinecone, Pinecone gate handles most cases → actual cost is much less.
+
+If no API key: judge always returns `approve=false` (no trades fire).
+
+---
+
+## Angel One SmartAPI (broker)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `ANGEL_API_KEY` | — | App API key from Angel dashboard |
+| `ANGEL_API_SECRET` | — | Dashboard secret (UUID) |
+| `ANGEL_CLIENT_CODE` | — | Your client ID (e.g., AACG844081) |
+| `ANGEL_PASSWORD` | — | Trading PIN (4-digit) |
+| `TOTP_SEED` | — | Base32 secret from Angel "Enable TOTP" — NOT the 6-digit code |
+| `ANGEL_CLIENT_LOCAL_IP` | `192.168.1.1` | Your local IP (sent in headers) |
+| `ANGEL_CLIENT_PUBLIC_IP` | `127.0.0.1` | Must match the whitelisted static IP in Angel dashboard |
+| `ANGEL_MAC_ADDRESS` | `00:00:00:00:00:00` | Your machine's MAC address |
+| `ANGEL_EXCHANGE` | `NSE` | Exchange |
+| `ANGEL_API_THROTTLE_MS` | `450` | Delay between getCandleData chunk requests |
+| `ANGEL_SYNC_TICKER_GAP_MS` | `800` | Extra pause between tickers in sync-history |
+| `QUOTE_BATCH_DELAY_MS` | `1100` | Delay between quote batches (≤50 symbols each) |
+
+**TOTP_SEED:** Go to Angel SmartAPI dashboard → Enable TOTP → you'll see a QR code and a Base32 secret below it. Use the Base32 secret here (looks like `4OCBO5ENLFSES4EXHCAXEPJBYU`), NOT the 6-digit rotating code.
+
+If credentials incomplete: falls back to `AngelOneStubBroker` — all broker calls return empty data or no-ops. Data fill commands won't work.
+
+---
+
+## Risk / Execution
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `EXECUTION_ENV` | `PAPER` | `PAPER` = log only, `LIVE` = real Angel orders |
+| `DAILY_STOP_LOSS` | `25000` | Kill switch: stop all trading if daily PnL ≤ -₹25,000 |
+| `MAX_CONCURRENT_TRADES` | `3` | Max open positions at once |
+| `WATCHED_TICKERS` | `RELIANCE,TCS,INFY` | Default tickers (used when TRADING_TICKER_SOURCE=env) |
+| `TRADING_TICKER_SOURCE` | `env` | `env` = use WATCHED_TICKERS, `active_watchlist` = use Mongo discovery list |
+
+---
+
+## Exit / Risk Parameters
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `EXIT_STOP_PCT` | `0.015` | Stop loss at 1.5% below entry |
+| `EXIT_TARGET_PCT` | `0.025` | Profit target at 2.5% above entry |
+| `EXIT_TRAIL_TRIGGER_PCT` | `0.01` | Trailing stop activates when 1% in profit |
+| `EXIT_TRAIL_DIST_PCT` | `0.0075` | Trailing stop distance: 0.75% below peak |
+| `BACKTEST_POSITION_QTY` | `10` | Position size (shares) for backtest PnL calculation |
+
+**Tuning guide:**
+- If you keep getting stopped out before reaching target → widen stop (`EXIT_STOP_PCT=0.02`)
+- If winners often reverse before hitting target → lower target or trail sooner (`EXIT_TRAIL_TRIGGER_PCT=0.008`)
+- If losses are large relative to wins → tighten stop (`EXIT_STOP_PCT=0.012`)
+- Good rule of thumb: target should be ≥ 1.5× stop (1:1.5 reward/risk minimum)
+
+---
+
+## Discovery / Watchlist
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DISCOVERY_SYMBOL_DELAY_MS` | `2000` | Pause between Nifty 100 symbols (daily fetch) |
+| `NIGHTLY_DISCOVERY` | `true` | Run discovery-sync automatically in POST_MORTEM |
+
+---
+
+## Pre-open Pivot
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `PREOPEN_PIVOT` | `true` | Enable pre-open gap/volume filter at ~09:10 IST |
+| `PREOPEN_JUDGE` | `false` | Enable LLM pick during pre-open (adds cost) |
+| `PREOPEN_MIN_ABS_GAP_PCT` | `1.5` | Min gap-up/down % to qualify |
+| `PREOPEN_MIN_VOL_VS_AVG` | `0.2` | Min session volume vs 5-day avg to qualify |
+| `PREOPEN_MAX_CANDIDATES` | `50` | Max symbols to quote during pre-open |
+| `PREOPEN_MAX_PICKS` | `10` | Max picks for updated watchlist |
+
+Requires: `TRADING_TICKER_SOURCE=active_watchlist`
+
+---
+
+## News
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `NEWS_ET_RSS_URL` | ET markets RSS | ET stocks feed URL |
+| `NEWS_SENTINEL` | `true` | Merge Moneycontrol HTML scrape with RSS |
+| `SENTINEL_MC_URL` | Moneycontrol markets URL | Override if URL changes |
+| `SENTINEL_TIMEOUT_MS` | `15000` | Timeout for Moneycontrol scrape (ms) |
+| `ARCHIVE_SCRAPER_DELAY_MS` | `2500` | Delay between days in backfill-news-scraper |
+| `HISTORICAL_NEWS_PATH` | `data/historical_news.json` | JSON file for backtest news replay |
+
+---
+
+## Benchmark / Trend
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `NIFTY_BENCHMARK_TICKER` | `NIFTY50` | Ticker symbol for macro trend context |
+
+Must have Mongo `ohlc_1m` data for this ticker (fill with `bun run sync-history -- --ticker NIFTY50`).
+
+---
+
+## Health / Emergency
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `HEALTH_PORT` | `3000` | HTTP port for `/health` endpoint |
+| `EMERGENCY_SQUARE_OFF_SECRET` | — | If set, enables `POST /v1/emergency/square-off` |
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Emergency stop all positions
+curl -X POST http://localhost:3000/v1/emergency/square-off \
+  -H "X-Emergency-Key: your-secret"
+```

@@ -9,6 +9,7 @@ import { fetchTodayNewsContext } from "../services/news.js";
 import { syncIntradayHistory } from "../services/marketSync.js";
 import { runDiscoverySync } from "../services/discoveryRun.js";
 import { runPreopenPivot } from "../services/preopenPivot.js";
+import { fetchNiftyTrendContext } from "../services/niftyTrend.js";
 import { env } from "../config/env.js";
 import {
   istDateString,
@@ -80,17 +81,20 @@ export class TradingOrchestrator {
       }
       case "EXECUTION": {
         const news = await fetchTodayNewsContext();
+        const niftyTrend = await fetchNiftyTrendContext(this.broker);
         const day = nowIST().startOf("day").toJSDate();
         const end = nowIST().toJSDate();
         const watch = await resolveWatchlistTickers();
         for (const ticker of watch) {
           const candles = await fetchOhlcRange(ticker, day, end);
           const last5m = aggregateLastNMinutes(candles, 5);
+          // Check exits first (stop-loss / profit-target / trailing stop)
+          await this.engine.checkLiveExits(ticker, candles);
           await this.engine.runScanningPass({
             ticker,
             sessionCandles: candles,
             last5m,
-            niftyTrendHint: "stub: wire NIFTY trend",
+            niftyTrendHint: niftyTrend,
             newsHeadlines: news,
           });
         }

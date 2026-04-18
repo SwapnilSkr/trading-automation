@@ -120,4 +120,16 @@ export const env = {
    * Empty disables the route (returns 404).
    */
   emergencySquareOffSecret: process.env.EMERGENCY_SQUARE_OFF_SECRET ?? "",
+
+  // ── Exit / Risk parameters ─────────────────────────────────────────────────
+  /** Stop-loss distance from entry as fraction (1.5 % default) */
+  exitStopPct: num("EXIT_STOP_PCT", 0.015),
+  /** Profit-target distance from entry as fraction (2.5 % default) */
+  exitTargetPct: num("EXIT_TARGET_PCT", 0.025),
+  /** Profit % that activates the trailing stop (1 % default) */
+  exitTrailTriggerPct: num("EXIT_TRAIL_TRIGGER_PCT", 0.01),
+  /** Trailing stop distance from peak as fraction (0.75 % default) */
+  exitTrailDistPct: num("EXIT_TRAIL_DIST_PCT", 0.0075),
+  /** Position size in shares for backtest PnL calculation */
+  backtestPositionQty: num("BACKTEST_POSITION_QTY", 10),
 };

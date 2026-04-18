@@ -14,7 +14,8 @@
     "backfill-news": "bun run src/cli/backfill-news.ts",
     "backfill-news-scraper": "bun run src/cli/backfill-news-scraper.ts",
     "weekend-optimize": "bun run src/cli/weekend-optimize.ts",
-    "backtest": "bun run src/cli/backtest.ts --"
+    "backtest": "bun run src/cli/backtest.ts --",
+    "backtest-analyze": "bun run src/cli/backtest-analyze.ts --"
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^7.2.0",

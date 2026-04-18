@@ -11,8 +11,14 @@ import {
   getWatchlistSnapshotForEffectiveDate,
 } from "../db/repositories.js";
 import { getHeadlinesForBacktest } from "../services/historicalNewsFeed.js";
-import type { Ohlc1m } from "../types/domain.js";
+import type { Ohlc1m, StrategyId, TradeLogDoc } from "../types/domain.js";
 import { IST, isIndianWeekday } from "../time/ist.js";
+import {
+  type SimPosition,
+  type ExitParams,
+  processBarForExits,
+  closeAllAtEod,
+} from "../execution/exitSimulator.js";
 
 export interface BacktestConfig {
   from: string;
@@ -37,18 +43,8 @@ export interface BacktestSummary {
   sessions: number;
   steps: number;
   scanCalls: number;
-}
-
-function* sessionTimeSteps(
-  day: DateTime,
-  stepMinutes: number
-): Generator<DateTime> {
-  let t = day.set({ hour: 9, minute: 15, second: 0, millisecond: 0 });
-  const end = day.set({ hour: 15, minute: 29, second: 0, millisecond: 0 });
-  while (t <= end) {
-    yield t;
-    t = t.plus({ minutes: stepMinutes });
-  }
+  /** Only populated when persistTrades=true and exit simulation runs */
+  tradesEntered: number;
 }
 
 function aggregateLastNMinutes(candles: Ohlc1m[], n: number): Ohlc1m | undefined {
@@ -68,8 +64,9 @@ function aggregateLastNMinutes(candles: Ohlc1m[], n: number): Ohlc1m | undefined
 }
 
 /**
- * Replay Mongo `ohlc_1m` through the execution engine with a simulated clock
- * (no dependency on `currentRunMode()` / live IST).
+ * Replay Mongo `ohlc_1m` bar-by-bar through the execution engine with a
+ * simulated IST clock. Includes stop-loss / profit-target exit simulation
+ * so `trades_backtest` contains complete entry + exit + PnL records.
  */
 export async function runBacktestReplay(
   config: BacktestConfig
@@ -81,11 +78,20 @@ export async function runBacktestReplay(
     throw new Error(`Invalid --from / --to (use YYYY-MM-DD, IST): ${config.from} ${config.to}`);
   }
 
+  const exitParams: ExitParams = {
+    stopPct: env.exitStopPct,
+    targetPct: env.exitTargetPct,
+    trailTriggerPct: env.exitTrailTriggerPct,
+    trailDistPct: env.exitTrailDistPct,
+    qty: env.backtestPositionQty,
+  };
+
   const summary: BacktestSummary = {
     runId,
     sessions: 0,
     steps: 0,
     scanCalls: 0,
+    tradesEntered: 0,
   };
 
   let d = start;
@@ -105,49 +111,67 @@ export async function runBacktestReplay(
       const snap = await getWatchlistSnapshotForEffectiveDate(dayKey);
       if (snap?.tickers?.length) {
         dayTickers = snap.tickers;
-        console.log(
-          `[Backtest] ${dayKey} watchlist from snapshot (${dayTickers.length} names)`
-        );
+        console.log(`[Backtest] ${dayKey} watchlist from snapshot (${dayTickers.length} names)`);
       } else {
-        console.warn(
-          `[Backtest] ${dayKey} no watchlist_snapshots — fallback static list`
-        );
+        console.warn(`[Backtest] ${dayKey} no watchlist_snapshots — fallback static list`);
       }
     }
 
     for (const ticker of dayTickers) {
-      const broker = config.skipOrders
-        ? new AngelOneStubBroker()
-        : createBroker();
+      const broker = config.skipOrders ? new AngelOneStubBroker() : createBroker();
       const engine = new ExecutionEngine(broker);
       const dayBars = await fetchOhlcRange(ticker, dayStart, dayEnd);
       if (dayBars.length < 40) {
-        console.warn(
-          `[Backtest] skip ${ticker} ${d.toISODate()}: only ${dayBars.length} bars (need history in Mongo)`
-        );
+        console.warn(`[Backtest] skip ${ticker} ${d.toISODate()}: only ${dayBars.length} bars`);
         continue;
       }
 
       const sessionStart = d.set({ hour: 9, minute: 15 }).toJSDate();
+      const sessionEnd = d.set({ hour: 15, minute: 29 }).toJSDate();
+      const sessionBars = dayBars.filter(
+        (b) => b.ts >= sessionStart && b.ts <= sessionEnd
+      );
+      if (sessionBars.length === 0) continue;
 
-      for (const simDt of sessionTimeSteps(d, config.stepMinutes)) {
-        const sim = simDt.toJSDate();
-        const sessionCandles = dayBars.filter(
-          (b) => b.ts >= sessionStart && b.ts <= sim
-        );
-        if (sessionCandles.length < 30) continue;
+      // Open positions for this ticker+day
+      let openPositions: SimPosition[] = [];
+      let lastScanMs = sessionStart.getTime() - 1; // force first scan
+
+      for (let bi = 0; bi < sessionBars.length; bi++) {
+        const bar = sessionBars[bi]!;
+
+        // 1. Check exits for open positions on this bar
+        if (openPositions.length > 0) {
+          openPositions = await processBarForExits(openPositions, bar, exitParams);
+        }
+
+        // 2. Decide whether to run a scan at this bar
+        const elapsedMin = (bar.ts.getTime() - lastScanMs) / 60_000;
+        const haveCapacity = openPositions.length < env.maxConcurrentTrades;
+        if (elapsedMin < config.stepMinutes || !haveCapacity) continue;
 
         summary.steps += 1;
+        lastScanMs = bar.ts.getTime();
+
+        const sessionCandles = sessionBars.slice(0, bi + 1);
+        if (sessionCandles.length < 30) continue;
+
         const last5m = aggregateLastNMinutes(sessionCandles, 5);
-        const newsHeadlines = await getHeadlinesForBacktest(sim);
+        const newsHeadlines = await getHeadlinesForBacktest(bar.ts);
+
+        // Capture newly entered trades so we can simulate exits
+        const newEntries: { doc: TradeLogDoc; entryPrice: number; side: "BUY" | "SELL" }[] = [];
 
         const bt: BacktestPassOptions = {
-          simulatedAt: sim,
+          simulatedAt: bar.ts,
           judgeModel: config.judgeModel ?? env.judgeModelBacktest,
           skipOrders: config.skipOrders,
-          persistBacktest: config.persistTrades,
+          persistBacktest: false, // we handle persistence below
           runId,
           skipJudge: config.skipJudge,
+          onTradeEntry: async (doc, entryPrice, side) => {
+            newEntries.push({ doc, entryPrice, side });
+          },
         };
 
         await engine.runScanningPass(
@@ -155,12 +179,32 @@ export async function runBacktestReplay(
             ticker,
             sessionCandles,
             last5m,
-            niftyTrendHint: `Replay IST ${d.toFormat("yyyy-MM-dd")} ${simDt.toFormat("HH:mm")}`,
+            niftyTrendHint: `Replay IST ${d.toFormat("yyyy-MM-dd")} ${DateTime.fromJSDate(bar.ts, { zone: IST }).toFormat("HH:mm")}`,
             newsHeadlines,
           },
           bt
         );
         summary.scanCalls += 1;
+
+        // Register new positions for exit tracking
+        for (const { doc, entryPrice, side } of newEntries) {
+          openPositions.push({
+            ticker,
+            entryPrice,
+            side,
+            strategy: doc.strategy as StrategyId,
+            entryTime: bar.ts,
+            peakPrice: entryPrice,
+            doc,
+          });
+          summary.tradesEntered += 1;
+        }
+      }
+
+      // 3. EOD: force-close everything at last bar's close
+      const lastBar = sessionBars[sessionBars.length - 1]!;
+      if (openPositions.length > 0) {
+        await closeAllAtEod(openPositions, lastBar, exitParams);
       }
     }
 

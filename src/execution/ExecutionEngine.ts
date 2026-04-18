@@ -38,6 +38,24 @@ export interface BacktestPassOptions {
   runId?: string;
   /** If true, skip OpenRouter entirely (deterministic deny) */
   skipJudge?: boolean;
+  /**
+   * If set, called instead of `insertBacktestTrade` — lets the orchestrator
+   * simulate exits before persisting the completed trade document.
+   */
+  onTradeEntry?: (
+    doc: TradeLogDoc,
+    entryPrice: number,
+    side: "BUY" | "SELL"
+  ) => Promise<void>;
+}
+
+interface LivePosition {
+  ticker: string;
+  side: "BUY" | "SELL";
+  entryPrice: number;
+  entryTime: Date;
+  peakPrice: number;
+  strategy: string;
 }
 
 export class ExecutionEngine {
@@ -45,6 +63,8 @@ export class ExecutionEngine {
   private openCount = 0;
   /** Live: last time we ran judge or Pinecone gate for this ticker */
   private lastJudgeByTicker = new Map<string, number>();
+  /** Live paper positions tracked for stop/target management */
+  private livePositions = new Map<string, LivePosition>();
 
   constructor(private broker: BrokerClient) {}
 
@@ -58,6 +78,61 @@ export class ExecutionEngine {
 
   setOpenCount(n: number): void {
     this.openCount = n;
+  }
+
+  /**
+   * Call on each EXECUTION tick BEFORE runScanningPass.
+   * Checks open paper positions against stop/target using latest candle.
+   * Closes positions that hit their levels via broker.closeIntraday.
+   */
+  async checkLiveExits(ticker: string, sessionCandles: Ohlc1m[]): Promise<void> {
+    const pos = this.livePositions.get(ticker);
+    if (!pos || sessionCandles.length === 0) return;
+
+    const bar = sessionCandles[sessionCandles.length - 1]!;
+
+    // Update peak
+    if (pos.side === "BUY" && bar.h > pos.peakPrice) pos.peakPrice = bar.h;
+    if (pos.side === "SELL" && bar.l < pos.peakPrice) pos.peakPrice = bar.l;
+
+    const stopPct = env.exitStopPct;
+    const targetPct = env.exitTargetPct;
+    const trailTriggerPct = env.exitTrailTriggerPct;
+    const trailDistPct = env.exitTrailDistPct;
+
+    let shouldExit = false;
+    let exitReason = "";
+
+    if (pos.side === "BUY") {
+      const stopPrice = pos.entryPrice * (1 - stopPct);
+      const targetPrice = pos.entryPrice * (1 + targetPct);
+      const trailActive = pos.peakPrice >= pos.entryPrice * (1 + trailTriggerPct);
+      const trailStop = trailActive ? pos.peakPrice * (1 - trailDistPct) : 0;
+      const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
+
+      if (bar.c >= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
+      else if (bar.c <= effectiveStop) { shouldExit = true; exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`; }
+    } else {
+      const stopPrice = pos.entryPrice * (1 + stopPct);
+      const targetPrice = pos.entryPrice * (1 - targetPct);
+      const trailActive = pos.peakPrice <= pos.entryPrice * (1 - trailTriggerPct);
+      const trailStop = trailActive ? pos.peakPrice * (1 + trailDistPct) : Infinity;
+      const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
+
+      if (bar.c <= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
+      else if (bar.c >= effectiveStop) { shouldExit = true; exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`; }
+    }
+
+    if (shouldExit) {
+      console.log(`[Exit] ${ticker} ${pos.side} — ${exitReason} @ ${bar.c}`);
+      await this.broker.closeIntraday(ticker);
+      this.livePositions.delete(ticker);
+      this.openCount = Math.max(0, this.openCount - 1);
+      const pnl = pos.side === "BUY"
+        ? (bar.c - pos.entryPrice)
+        : (pos.entryPrice - bar.c);
+      this.recordPnl(pnl);
+    }
   }
 
   async runScanningPass(
@@ -214,18 +289,22 @@ export class ExecutionEngine {
       ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
     };
 
+    const side =
+      hit.strategy === "MEAN_REV_Z"
+        ? (snap.z_score_vwap ?? 0) > 0
+          ? "SELL"
+          : "BUY"
+        : "BUY";
+
+    const entryPrice =
+      ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
+
     const doOrder =
       judge.approve &&
       checkSafety(this.safety, this.openCount) &&
       !backtest?.skipOrders;
 
     if (doOrder) {
-      const side =
-        hit.strategy === "MEAN_REV_Z"
-          ? (snap.z_score_vwap ?? 0) > 0
-            ? "SELL"
-            : "BUY"
-          : "BUY";
       await this.broker.placePaperOrder({
         ticker,
         side,
@@ -233,9 +312,23 @@ export class ExecutionEngine {
         strategy: hit.strategy,
       });
       this.openCount += 1;
+      // Track position for live stop/target management
+      if (!backtest) {
+        this.livePositions.set(ticker, {
+          ticker,
+          side,
+          entryPrice,
+          entryTime: entryTime,
+          peakPrice: entryPrice,
+          strategy: hit.strategy,
+        });
+      }
     }
 
-    if (backtest?.persistBacktest) {
+    if (judge.approve && backtest?.onTradeEntry) {
+      // Delegate persistence to orchestrator (for exit simulation)
+      await backtest.onTradeEntry(doc, entryPrice, side);
+    } else if (backtest?.persistBacktest) {
       await insertBacktestTrade(doc);
     } else if (!backtest) {
       await insertTrade(doc);
