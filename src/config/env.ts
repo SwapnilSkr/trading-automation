@@ -143,4 +143,43 @@ export const env = {
   exitTrailDistPct: num("EXIT_TRAIL_DIST_PCT", 0.0075),
   /** Position size in shares for backtest PnL calculation */
   backtestPositionQty: num("BACKTEST_POSITION_QTY", 10),
+
+  // ── Backtest microstructure realism ───────────────────────────────────────
+  /** Master toggle for slippage/spread/fees/latency realism model in replay */
+  backtestRealismEnabled: process.env.BACKTEST_REALISM_ENABLED !== "false",
+  /** Entry fill delay in bars (0 = signal bar, 1 = next bar open) */
+  backtestEntryLatencyBars: num("BACKTEST_ENTRY_LATENCY_BARS", 1),
+  /** If stop and target are both touched in one candle, assume adverse fill */
+  backtestPessimisticIntrabar:
+    process.env.BACKTEST_PESSIMISTIC_INTRABAR !== "false",
+  /** Assumed bid-ask spread in basis points (round-trip cost split across legs) */
+  backtestSpreadBps: num("BACKTEST_SPREAD_BPS", 2.0),
+  /** Baseline adverse slippage in basis points per fill */
+  backtestBaseSlippageBps: num("BACKTEST_BASE_SLIPPAGE_BPS", 1.0),
+  /** Additional slippage bps for each 1% participation of bar volume */
+  backtestImpactBpsPer1PctParticipation: num(
+    "BACKTEST_IMPACT_BPS_PER_1PCT_PARTICIPATION",
+    0.15
+  ),
+  /** Scales bar-range-derived volatility into slippage bps */
+  backtestVolatilitySlippageCoeff: num(
+    "BACKTEST_VOLATILITY_SLIPPAGE_COEFF",
+    0.1
+  ),
+  /** Enable fee/tax model in backtest PnL */
+  backtestFeesEnabled: process.env.BACKTEST_FEES_ENABLED !== "false",
+  /** Brokerage rate as fraction of turnover (0.03% = 0.0003) */
+  backtestBrokeragePct: num("BACKTEST_BROKERAGE_PCT", 0.0003),
+  /** Max brokerage per order leg (rupees) */
+  backtestBrokerageCapPerOrder: num("BACKTEST_BROKERAGE_CAP_PER_ORDER", 20),
+  /** STT on sell turnover (intraday equity) */
+  backtestSttSellPct: num("BACKTEST_STT_SELL_PCT", 0.00025),
+  /** Exchange transaction charge on total turnover */
+  backtestExchangeTxnPct: num("BACKTEST_EXCHANGE_TXN_PCT", 0.0000297),
+  /** SEBI turnover charge */
+  backtestSebiPct: num("BACKTEST_SEBI_PCT", 0.000001),
+  /** GST on brokerage + exchange charge */
+  backtestGstPct: num("BACKTEST_GST_PCT", 0.18),
+  /** Stamp duty on buy turnover */
+  backtestStampDutyBuyPct: num("BACKTEST_STAMP_DUTY_BUY_PCT", 0.00003),
 };

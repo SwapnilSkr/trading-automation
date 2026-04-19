@@ -19,6 +19,10 @@ import {
   processBarForExits,
   closeAllAtEod,
 } from "../execution/exitSimulator.js";
+import {
+  applyExecutionFill,
+  getBacktestRealismConfig,
+} from "./microstructure.js";
 
 export interface BacktestConfig {
   from: string;
@@ -84,6 +88,8 @@ export async function runBacktestReplay(
     trailTriggerPct: env.exitTrailTriggerPct,
     trailDistPct: env.exitTrailDistPct,
     qty: env.backtestPositionQty,
+    pessimisticIntrabar: env.backtestPessimisticIntrabar,
+    realism: getBacktestRealismConfig(),
   };
 
   const summary: BacktestSummary = {
@@ -135,10 +141,51 @@ export async function runBacktestReplay(
 
       // Open positions for this ticker+day
       let openPositions: SimPosition[] = [];
+      const pendingEntries: Array<{
+        activateIndex: number;
+        signalPrice: number;
+        side: "BUY" | "SELL";
+        doc: TradeLogDoc;
+      }> = [];
       let lastScanMs = sessionStart.getTime() - 1; // force first scan
 
       for (let bi = 0; bi < sessionBars.length; bi++) {
         const bar = sessionBars[bi]!;
+
+        // 0. Activate pending entries (latency model)
+        if (pendingEntries.length > 0) {
+          const ready = pendingEntries.filter((p) => p.activateIndex === bi);
+          if (ready.length > 0) {
+            for (const p of ready) {
+              if (openPositions.length >= env.maxConcurrentTrades) continue;
+              const ref =
+                exitParams.realism.entryLatencyBars > 0 ? bar.o : p.signalPrice;
+              const fill = applyExecutionFill(
+                ref,
+                p.side,
+                bar,
+                exitParams.qty,
+                exitParams.realism
+              );
+              p.doc.entry_time = bar.ts;
+              openPositions.push({
+                ticker,
+                entryPrice: fill.fillPrice,
+                entryReferencePrice: ref,
+                entrySlippageRupees: fill.slippageRupees,
+                side: p.side,
+                strategy: p.doc.strategy as StrategyId,
+                entryTime: bar.ts,
+                peakPrice: fill.fillPrice,
+                doc: p.doc,
+              });
+              summary.tradesEntered += 1;
+            }
+          }
+          const leftovers = pendingEntries.filter((p) => p.activateIndex > bi);
+          pendingEntries.length = 0;
+          pendingEntries.push(...leftovers);
+        }
 
         // 1. Check exits for open positions on this bar
         if (openPositions.length > 0) {
@@ -152,7 +199,8 @@ export async function runBacktestReplay(
 
         // 2. Decide whether to run a scan at this bar
         const elapsedMin = (bar.ts.getTime() - lastScanMs) / 60_000;
-        const haveCapacity = openPositions.length < env.maxConcurrentTrades;
+        const haveCapacity =
+          openPositions.length + pendingEntries.length < env.maxConcurrentTrades;
         if (elapsedMin < config.stepMinutes || !haveCapacity) continue;
 
         summary.steps += 1;
@@ -193,16 +241,14 @@ export async function runBacktestReplay(
 
         // Register new positions for exit tracking
         for (const { doc, entryPrice, side } of newEntries) {
-          openPositions.push({
-            ticker,
-            entryPrice,
+          const activateIndex = bi + Math.max(0, exitParams.realism.entryLatencyBars);
+          if (activateIndex >= sessionBars.length) continue;
+          pendingEntries.push({
+            activateIndex,
+            signalPrice: entryPrice,
             side,
-            strategy: doc.strategy as StrategyId,
-            entryTime: bar.ts,
-            peakPrice: entryPrice,
             doc,
           });
-          summary.tradesEntered += 1;
         }
       }
 

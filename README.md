@@ -194,6 +194,8 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # techni
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
 ```
 
+Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.
+
 ### backtest-analyze flags
 ```bash
 bun run backtest-analyze -- --last              # latest run

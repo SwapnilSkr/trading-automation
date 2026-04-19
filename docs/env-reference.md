@@ -109,6 +109,30 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 
 ---
 
+## Backtest Realism (Microstructure + Charges)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `BACKTEST_REALISM_ENABLED` | `true` | Master toggle for realistic fills/costs in replay |
+| `BACKTEST_ENTRY_LATENCY_BARS` | `1` | Entry delay in bars (`1` = next-bar-open execution) |
+| `BACKTEST_PESSIMISTIC_INTRABAR` | `true` | If stop+target hit in same candle, choose adverse outcome |
+| `BACKTEST_SPREAD_BPS` | `2.0` | Assumed bid-ask spread (bps) |
+| `BACKTEST_BASE_SLIPPAGE_BPS` | `1.0` | Baseline adverse slippage per fill |
+| `BACKTEST_IMPACT_BPS_PER_1PCT_PARTICIPATION` | `0.15` | Extra slippage by `qty / bar_volume` participation |
+| `BACKTEST_VOLATILITY_SLIPPAGE_COEFF` | `0.1` | Scales bar-range volatility into slippage |
+| `BACKTEST_FEES_ENABLED` | `true` | Apply brokerage/taxes model to net PnL |
+| `BACKTEST_BROKERAGE_PCT` | `0.0003` | Brokerage % (0.03%) per leg |
+| `BACKTEST_BROKERAGE_CAP_PER_ORDER` | `20` | Brokerage cap per order leg (₹) |
+| `BACKTEST_STT_SELL_PCT` | `0.00025` | STT on sell turnover |
+| `BACKTEST_EXCHANGE_TXN_PCT` | `0.0000297` | Exchange charge on turnover |
+| `BACKTEST_SEBI_PCT` | `0.000001` | SEBI charge on turnover |
+| `BACKTEST_GST_PCT` | `0.18` | GST on brokerage + exchange charge |
+| `BACKTEST_STAMP_DUTY_BUY_PCT` | `0.00003` | Stamp duty on buy turnover |
+
+Use `BACKTEST_REALISM_ENABLED=false` when you want quick research-only runs; keep it `true` for execution-realistic evaluation.
+
+---
+
 ## Discovery / Watchlist
 
 | Variable | Default | Notes |

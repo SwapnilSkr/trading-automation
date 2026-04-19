@@ -38,10 +38,16 @@ export interface TradeLogDoc extends Document {
   /** Set on rows written to `trades_backtest` */
   backtest_run_id?: string;
   result?: {
+    /** Net PnL after slippage and charges */
     pnl: number;
+    /** Total slippage cost in rupees (entry + exit) */
     slippage: number;
     outcome: TradeOutcome;
     pnl_percent?: number;
+    /** Gross PnL before charges */
+    gross_pnl?: number;
+    /** Total modeled fees/taxes */
+    charges?: number;
   };
 }
 

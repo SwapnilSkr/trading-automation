@@ -93,6 +93,7 @@ Flags explained:
 - `--no-persist`: dry run, don't write to trades_backtest
 
 The backtest now produces complete trades with entry + exit prices and PnL. It simulates stop-loss, profit target, and trailing stop bar-by-bar using actual 1m candle data.
+Replay defaults to execution-realistic net PnL (entry latency, spread/slippage/impact, and modeled charges/taxes). See `docs/env-reference.md` (`Backtest Realism` section) to tune aggressiveness.
 
 Bias control in replay:
 - Backtest memory lookup now uses only Pinecone neighbors from dates strictly before the simulated bar day (causal; no future-day leakage).

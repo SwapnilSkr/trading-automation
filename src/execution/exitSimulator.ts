@@ -1,9 +1,16 @@
 import type { Ohlc1m, StrategyId, TradeLogDoc, TradeOutcome } from "../types/domain.js";
 import { insertBacktestTrade } from "../db/repositories.js";
+import {
+  applyExecutionFill,
+  computeIntradayCharges,
+  type BacktestRealismConfig,
+} from "../backtest/microstructure.js";
 
 export interface SimPosition {
   ticker: string;
   entryPrice: number;
+  entryReferencePrice?: number;
+  entrySlippageRupees?: number;
   side: "BUY" | "SELL";
   strategy: StrategyId;
   entryTime: Date;
@@ -19,6 +26,8 @@ export interface ExitParams {
   trailTriggerPct: number;
   trailDistPct: number;
   qty: number;
+  pessimisticIntrabar: boolean;
+  realism: BacktestRealismConfig;
 }
 
 type ExitResult =
@@ -50,13 +59,22 @@ export function checkExitOnBar(
     const trailStop = trailActive ? peak * (1 - trailDistPct) : 0;
     const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
 
-    // Target hit first (check H vs L ordering within bar)
-    if (bar.h >= targetPrice) {
+    const targetHit = bar.h >= targetPrice;
+    const stopHit = bar.l <= effectiveStop;
+
+    if (targetHit && stopHit) {
+      const exitPrice = params.pessimisticIntrabar ? effectiveStop : targetPrice;
+      const pnlPct = (exitPrice - pos.entryPrice) / pos.entryPrice;
+      const outcome: TradeOutcome =
+        exitPrice >= targetPrice ? "WIN" : pnlPct >= -0.001 ? "BREAKEVEN" : "LOSS";
+      return { result: { exited: true, exitPrice, outcome, pnlPct }, updatedPeak: peak };
+    }
+
+    if (targetHit) {
       const pnlPct = (targetPrice - pos.entryPrice) / pos.entryPrice;
       return { result: { exited: true, exitPrice: targetPrice, outcome: "WIN", pnlPct }, updatedPeak: peak };
     }
-    // Stop hit
-    if (bar.l <= effectiveStop) {
+    if (stopHit) {
       const exitPrice = effectiveStop;
       const pnlPct = (exitPrice - pos.entryPrice) / pos.entryPrice;
       const outcome: TradeOutcome = pnlPct >= -0.001 ? "BREAKEVEN" : "LOSS";
@@ -73,11 +91,22 @@ export function checkExitOnBar(
     const trailStop = trailActive ? peak * (1 + trailDistPct) : Infinity;
     const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
 
-    if (bar.l <= targetPrice) {
+    const targetHit = bar.l <= targetPrice;
+    const stopHit = bar.h >= effectiveStop;
+
+    if (targetHit && stopHit) {
+      const exitPrice = params.pessimisticIntrabar ? effectiveStop : targetPrice;
+      const pnlPct = (pos.entryPrice - exitPrice) / pos.entryPrice;
+      const outcome: TradeOutcome =
+        exitPrice <= targetPrice ? "WIN" : pnlPct >= -0.001 ? "BREAKEVEN" : "LOSS";
+      return { result: { exited: true, exitPrice, outcome, pnlPct }, updatedPeak: peak };
+    }
+
+    if (targetHit) {
       const pnlPct = (pos.entryPrice - targetPrice) / pos.entryPrice;
       return { result: { exited: true, exitPrice: targetPrice, outcome: "WIN", pnlPct }, updatedPeak: peak };
     }
-    if (bar.h >= effectiveStop) {
+    if (stopHit) {
       const exitPrice = effectiveStop;
       const pnlPct = (pos.entryPrice - exitPrice) / pos.entryPrice;
       const outcome: TradeOutcome = pnlPct >= -0.001 ? "BREAKEVEN" : "LOSS";
@@ -103,13 +132,38 @@ export async function processBarForExits(
   for (const pos of positions) {
     const { result, updatedPeak } = checkExitOnBar(pos, bar, params);
     if (result.exited) {
-      const pnlRupees = result.pnlPct * pos.entryPrice * params.qty;
+      const closeSide: "BUY" | "SELL" = pos.side === "BUY" ? "SELL" : "BUY";
+      const fill = applyExecutionFill(
+        result.exitPrice,
+        closeSide,
+        bar,
+        params.qty,
+        params.realism
+      );
+      const grossPnl =
+        pos.side === "BUY"
+          ? (fill.fillPrice - pos.entryPrice) * params.qty
+          : (pos.entryPrice - fill.fillPrice) * params.qty;
+      const charges = computeIntradayCharges(
+        pos.side,
+        pos.entryPrice,
+        fill.fillPrice,
+        params.qty,
+        params.realism
+      );
+      const netPnl = grossPnl - charges.total;
+      const netPct = netPnl / Math.max(1e-9, pos.entryPrice * params.qty);
+      const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
+      const outcome: TradeOutcome =
+        netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";
       pos.doc.exit_time = bar.ts;
       pos.doc.result = {
-        pnl: parseFloat(pnlRupees.toFixed(2)),
-        slippage: 0,
-        outcome: result.outcome,
-        pnl_percent: parseFloat((result.pnlPct * 100).toFixed(3)),
+        pnl: parseFloat(netPnl.toFixed(2)),
+        slippage: parseFloat(slippage.toFixed(2)),
+        outcome,
+        pnl_percent: parseFloat((netPct * 100).toFixed(3)),
+        gross_pnl: parseFloat(grossPnl.toFixed(2)),
+        charges: parseFloat(charges.total.toFixed(2)),
       };
       if (persist) {
         await insertBacktestTrade(pos.doc);
@@ -131,20 +185,38 @@ export async function closeAllAtEod(
   persist = true
 ): Promise<void> {
   for (const pos of positions) {
-    const exitPrice = lastBar.c;
-    const pnlPct =
+    const closeSide: "BUY" | "SELL" = pos.side === "BUY" ? "SELL" : "BUY";
+    const fill = applyExecutionFill(
+      lastBar.c,
+      closeSide,
+      lastBar,
+      params.qty,
+      params.realism
+    );
+    const grossPnl =
       pos.side === "BUY"
-        ? (exitPrice - pos.entryPrice) / pos.entryPrice
-        : (pos.entryPrice - exitPrice) / pos.entryPrice;
-    const pnlRupees = pnlPct * pos.entryPrice * params.qty;
+        ? (fill.fillPrice - pos.entryPrice) * params.qty
+        : (pos.entryPrice - fill.fillPrice) * params.qty;
+    const charges = computeIntradayCharges(
+      pos.side,
+      pos.entryPrice,
+      fill.fillPrice,
+      params.qty,
+      params.realism
+    );
+    const netPnl = grossPnl - charges.total;
+    const netPct = netPnl / Math.max(1e-9, pos.entryPrice * params.qty);
+    const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
     const outcome: TradeOutcome =
-      pnlPct > 0.001 ? "WIN" : pnlPct < -0.001 ? "LOSS" : "BREAKEVEN";
+      netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";
     pos.doc.exit_time = lastBar.ts;
     pos.doc.result = {
-      pnl: parseFloat(pnlRupees.toFixed(2)),
-      slippage: 0,
+      pnl: parseFloat(netPnl.toFixed(2)),
+      slippage: parseFloat(slippage.toFixed(2)),
       outcome,
-      pnl_percent: parseFloat((pnlPct * 100).toFixed(3)),
+      pnl_percent: parseFloat((netPct * 100).toFixed(3)),
+      gross_pnl: parseFloat(grossPnl.toFixed(2)),
+      charges: parseFloat(charges.total.toFixed(2)),
     };
     if (persist) {
       await insertBacktestTrade(pos.doc);
