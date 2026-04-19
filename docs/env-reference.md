@@ -137,9 +137,13 @@ Requires: `TRADING_TICKER_SOURCE=active_watchlist`
 | `NEWS_ET_RSS_URL` | ET markets RSS | ET stocks feed URL |
 | `NEWS_SENTINEL` | `true` | Merge Moneycontrol HTML scrape with RSS |
 | `SENTINEL_MC_URL` | Moneycontrol markets URL | Override if URL changes |
-| `SENTINEL_TIMEOUT_MS` | `15000` | Timeout for Moneycontrol scrape (ms) |
-| `ARCHIVE_SCRAPER_DELAY_MS` | `2500` | Delay between days in backfill-news-scraper |
+| `SENTINEL_TIMEOUT_MS` | `15000` | Per-request timeout (ms) for RSS, Moneycontrol, and ET archive fetches |
+| `SENTINEL_MAX_RETRIES` | `4` | Retries on `5xx`, `429`, timeouts, and transient network errors |
+| `SENTINEL_RETRY_BASE_MS` | `700` | Base backoff between retry attempts (jitter added) |
+| `ARCHIVE_SCRAPER_DELAY_MS` | `2500` | Delay between days in `backfill-news-scraper` (rate politeness) |
 | `HISTORICAL_NEWS_PATH` | `data/historical_news.json` | JSON file for backtest news replay |
+
+ET archive backfill uses the site’s `starttime-*` day URLs (not legacy `day-*`, which 404). Scrapers detect soft 404 HTML shells when present.
 
 ---
 
