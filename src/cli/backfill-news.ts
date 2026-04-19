@@ -6,7 +6,7 @@
  */
 import "dotenv/config";
 import { ensureIndexes, upsertNews } from "../db/repositories.js";
-import { closeMongo } from "../db/mongo.js";
+import { runCli } from "./runCli.js";
 
 const manualHistory: { date: string; headlines: string[] }[] = [
   {
@@ -51,10 +51,6 @@ async function main(): Promise<void> {
     console.log(`[backfill-news] ${entry.date}: ${entry.headlines.length} headlines`);
   }
   console.log("[backfill-news] done — news_context seeded");
-  await closeMongo();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

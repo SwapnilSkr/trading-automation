@@ -11,6 +11,7 @@ import {
 } from "./db/repositories.js";
 import type { TradeLogDoc } from "./types/domain.js";
 import { istDateString, nowIST } from "./time/ist.js";
+import { runCli } from "./cli/runCli.js";
 
 function tradeLine(t: TradeLogDoc): string {
   const oc = t.result?.outcome ?? "OPEN";
@@ -86,7 +87,4 @@ async function main(): Promise<void> {
   console.log("[Analyst] Lesson saved for", date);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

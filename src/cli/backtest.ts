@@ -8,7 +8,7 @@ import {
 import { runBacktestReplay } from "../backtest/BacktestOrchestrator.js";
 import { parseHistoricalNewsFile } from "../services/historicalNewsFeed.js";
 import type { NewsArchiveDoc } from "../types/domain.js";
-import { closeMongo } from "../db/mongo.js";
+import { runCli } from "./runCli.js";
 
 function parseArgs(): Record<string, string | boolean> {
   const a = process.argv.slice(2);
@@ -51,8 +51,7 @@ function parseArgs(): Record<string, string | boolean> {
 
 async function importNews(path: string): Promise<void> {
   if (!existsSync(path)) {
-    console.error("File not found:", path);
-    process.exit(1);
+    throw new Error(`File not found: ${path}`);
   }
   const text = readFileSync(path, "utf8");
   const parsed = parseHistoricalNewsFile(text);
@@ -71,7 +70,6 @@ async function main(): Promise<void> {
   if (args["import-news"] && typeof args["import-news"] === "string") {
     await ensureIndexes();
     await importNews(args["import-news"]);
-    await closeMongo();
     return;
   }
 
@@ -93,7 +91,7 @@ Options:
   --allow-broker-orders         unsafe: call broker during replay (default: skip)
 
   --import-news <file.json>     load historical news into Mongo news_archive, then exit`);
-    process.exit(1);
+    throw new Error("Missing required --from and --to (see usage above)");
   }
 
   await ensureIndexes();
@@ -101,18 +99,16 @@ Options:
   let tickers: string[];
   const snapshotMode = args["watchlist-snapshots"] === true;
   if (args["use-active-watchlist"] === true && snapshotMode) {
-    console.error(
+    throw new Error(
       "[backtest] use only one of --use-active-watchlist or --watchlist-snapshots"
     );
-    process.exit(1);
   }
   if (args["use-active-watchlist"] === true) {
     const doc = await getSessionWatchlist();
     if (!doc?.tickers?.length) {
-      console.error(
+      throw new Error(
         "[backtest] --use-active-watchlist: no Mongo active_watchlist.current_session; run discovery-sync first"
       );
-      process.exit(1);
     }
     tickers = doc.tickers;
   } else if (args.tickers) {
@@ -163,10 +159,6 @@ Options:
   console.log(
     `[backtest] query Mongo: db.trades_backtest.find({ backtest_run_id: "${summary.runId}" })`
   );
-  await closeMongo();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

@@ -12,6 +12,7 @@ import { ensureIndexes } from "../db/repositories.js";
 import { runDiscoverySync } from "../services/discoveryRun.js";
 import { fetchTodayNewsContext } from "../services/news.js";
 import { istDateString } from "../time/ist.js";
+import { runCli } from "./runCli.js";
 
 function parseArgs(): {
   days: number;
@@ -145,7 +146,4 @@ async function main(): Promise<void> {
   console.log("[discovery-sync] done");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

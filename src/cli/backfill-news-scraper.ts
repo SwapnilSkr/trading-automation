@@ -10,7 +10,7 @@ import "dotenv/config";
 import { DateTime } from "luxon";
 import { env } from "../config/env.js";
 import { ensureIndexes, upsertNews } from "../db/repositories.js";
-import { closeMongo } from "../db/mongo.js";
+import { runCli } from "./runCli.js";
 import {
   filterMarketHeadlines,
   scrapeEtArchiveDay,
@@ -42,7 +42,7 @@ function parseArgs(): { from: string; to: string; filter: boolean } {
     console.error(
       "Usage: bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD [--no-filter]"
     );
-    process.exit(1);
+    throw new Error("Missing --from / --to");
   }
   return { from, to, filter };
 }
@@ -91,10 +91,6 @@ async function main(): Promise<void> {
   }
 
   console.log("[backfill-news-scraper] done");
-  await closeMongo();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

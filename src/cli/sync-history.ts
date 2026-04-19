@@ -13,6 +13,7 @@ import { env } from "../config/env.js";
 import { ensureIndexes } from "../db/repositories.js";
 import { syncOhlcForRange } from "../services/marketSync.js";
 import { IST } from "../time/ist.js";
+import { runCli } from "./runCli.js";
 
 function parseArgs(): {
   tickers: string[];
@@ -106,7 +107,4 @@ async function main(): Promise<void> {
   console.log("[sync-history] done");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

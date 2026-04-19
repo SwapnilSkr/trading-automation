@@ -8,6 +8,7 @@ import { embedCandlePattern } from "../embeddings/patternEmbedding.js";
 import { upsertPatternVector } from "../pinecone/patternStore.js";
 import { IST } from "../time/ist.js";
 import { runHybridBacktest } from "../backtest/hybridBacktest.js";
+import { runCli } from "./runCli.js";
 
 const LOOKBACK_MIN = 30;
 const MOVE_THRESHOLD = 0.02;
@@ -105,8 +106,9 @@ async function main(): Promise<void> {
 
   const tickers = await resolveOptimizeTickers();
   if (tickers.length === 0) {
-    console.error("[weekend-optimize] No tickers with sufficient data. Run discovery-sync and sync-history first.");
-    process.exit(1);
+    throw new Error(
+      "[weekend-optimize] No tickers with sufficient data. Run discovery-sync and sync-history first."
+    );
   }
 
   const total = await mineGoldenPatterns(tickers);
@@ -122,7 +124,4 @@ async function main(): Promise<void> {
   console.log(`[weekend-optimize] hybrid replay events: ${ev.length}`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);

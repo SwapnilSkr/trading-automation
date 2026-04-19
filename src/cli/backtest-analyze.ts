@@ -10,6 +10,7 @@
  */
 import "dotenv/config";
 import { getDb, collections } from "../db/mongo.js";
+import { runCli } from "./runCli.js";
 import type { TradeLogDoc, TradeOutcome } from "../types/domain.js";
 
 function parseArgs(): { runId?: string; last: boolean } {
@@ -118,8 +119,9 @@ async function main(): Promise<void> {
       .limit(1)
       .toArray();
     if (!latest[0]?.backtest_run_id) {
-      console.error("[backtest-analyze] No backtest runs found in trades_backtest.");
-      process.exit(1);
+      throw new Error(
+        "[backtest-analyze] No backtest runs found in trades_backtest."
+      );
     }
     filter = { backtest_run_id: latest[0].backtest_run_id };
     console.log(`\n[backtest-analyze] Latest run: ${latest[0].backtest_run_id}`);
@@ -133,7 +135,7 @@ async function main(): Promise<void> {
 
   if (all.length === 0) {
     console.log("  No trades found. Run backtest first.");
-    process.exit(0);
+    return;
   }
 
   const overall = computeStats(all);
@@ -187,10 +189,6 @@ async function main(): Promise<void> {
     console.log("  ✓✓ Profit factor > 2.0 — strong edge. Validate on unseen out-of-sample data.");
   }
   console.log("");
-  process.exit(0);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runCli(main);
