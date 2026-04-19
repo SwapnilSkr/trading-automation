@@ -22,9 +22,12 @@ Run these in order. They talk to Angel SmartAPI and are rate-limited.
 **1a. Score Nifty 100 + backfill top 20 stocks (30 days of 1m OHLC)**
 ```bash
 bun run discovery-sync -- --days 30 --top 20
+# Recommended periodically: refresh the index constituent list from NSE (updates data/ind_nifty100list.csv)
+bun run discovery-sync -- --days 30 --top 20 --refresh-universe
 ```
 What this does:
-- Loads all 100 Nifty 100 symbols from `data/ind_nifty100list.csv`
+- Loads all 100 Nifty 100 symbols from **`data/ind_nifty100list.csv`** (bundled copy). Without **`--refresh-universe`**, every run uses that same file until you refresh it. With **`--refresh-universe`**, it tries to download the official NSE Nifty 100 CSV and overwrite the file on success; on failure it falls back to disk.
+- The **daemon nightly** discovery (POST_MORTEM) does **not** refresh the CSV — only the on-disk list — unless you change the code. Use **`--refresh-universe`** on your weekend CLI run if you want the current index membership.
 - Fetches 5-day daily OHLC for each via Angel
 - Scores: `|5-day return| × (last vol / avg vol)` — momentum × volume interest
 - Takes the top 20 by score
@@ -40,13 +43,15 @@ bun run sync-history -- --days 30 --ticker NIFTY50
 ```
 The live judge receives a string like `"NIFTY50 bearish trend, -0.8% from open, below VWAP"` from Mongo 1m data. Without this, the judge gets no macro filter.
 
-**1c. Backfill news for the backtest window**
+**1c. Backfill daily news (`news_context`)**
 ```bash
 bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17
 ```
-Scrapes ET archive headlines per day into `news_context`. The backtest replays these headlines to give the judge realistic market sentiment context. Adjust dates to match your `--from/--to` backtest window.
+Scrapes ET archive headlines per day into Mongo **`news_context`** (one document per **`date`**, used by **`fetchTodayNewsContext`** for **live** / same-day judge context).
 
-Expect: ~2–3 min (2.5s delay between days)
+**Backtests** read **`news_archive`** (documents with a **`ts`** field) and optional **`HISTORICAL_NEWS_PATH`** JSON — not `news_context`. To give the judge headlines during replay, use e.g. `bun run backtest -- --import-news your.json` (loads into `news_archive`) or maintain `data/historical_news.json`. See `README.md` → MongoDB collections.
+
+Expect: ~2–3 min (2.5s delay between days; scraper retries on transient failures)
 
 ---
 

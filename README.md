@@ -78,8 +78,12 @@ Run these commands **in order** on Saturday/Sunday to fill the data tank. Each d
 ### Step 1 — Score Nifty 100, get top 20 + their OHLC (30 days)
 ```bash
 bun run discovery-sync -- --days 30 --top 20
+# Optional: pull the latest Nifty 100 constituents from NSE and refresh data/ind_nifty100list.csv
+bun run discovery-sync -- --days 30 --top 20 --refresh-universe
 ```
 Scores all 100 Nifty stocks by momentum (5-day return × volume ratio), picks the top 20, and backfills their 1m candles. Takes ~20–40 minutes due to Angel rate limits.
+
+**Universe source:** By default symbols come from `data/ind_nifty100list.csv` in the repo. **`--refresh-universe`** downloads the official NSE Nifty 100 CSV, overwrites that file when the download succeeds (≥90 symbols), then scores; if NSE fails, it falls back to the existing CSV. The daemon’s **nightly** `discovery-sync` does **not** pass this flag (it always uses the on-disk CSV unless you change the code).
 
 ### Step 2 — Fill NIFTY50 index bars (needed for trend context)
 ```bash
@@ -87,11 +91,11 @@ bun run sync-history -- --days 30 --ticker NIFTY50
 ```
 The judge needs NIFTY50 data to say "market is bullish/bearish today." Without this it gets no macro context.
 
-### Step 3 — Backfill historical news (last 30 days)
+### Step 3 — Backfill daily news (`news_context`) for live / same-day use
 ```bash
 bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17
 ```
-Scrapes ET archive headlines into `news_context` so the judge has market context during backtest replay. Adjust dates to your target range.
+Writes **one row per calendar day** into Mongo **`news_context`** (used by **`fetchTodayNewsContext`** in the live daemon and for “today’s” ingestion). **Bar replay backtests** do **not** read `news_context`; they use **`news_archive`** (timestamped rows) and/or **`HISTORICAL_NEWS_PATH`** JSON — see [MongoDB collections](#mongodb-collections) and `bun run backtest -- --import-news <file.json>`.
 
 ### Step 4 — Mine price patterns into Pinecone
 ```bash
@@ -175,6 +179,7 @@ bun run sync-history -- --from 2026-01-01 --to 2026-03-31 --ticker RELIANCE
 ```bash
 bun run discovery-sync -- --days 5 --top 10      # default
 bun run discovery-sync -- --days 30 --top 20     # more data, bigger watchlist
+bun run discovery-sync -- --refresh-universe     # fetch NSE Nifty 100 CSV → update data/ind_nifty100list.csv
 bun run discovery-sync -- --dry-run              # score only, don't write
 bun run discovery-sync -- --skip-ohlc           # score only, skip 1m backfill
 ```
@@ -236,7 +241,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 - **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/target/trailing for backtest.
 - **Discovery** — `src/services/discoveryRun.ts` + `src/discovery/performerScore.ts`: Nifty 100 momentum score, writes `active_watchlist` + `watchlist_snapshots`.
 - **Pattern memory** — `src/pinecone/patternStore.ts` + `src/embeddings/patternEmbedding.ts`: log-return embeddings, cosine similarity, WIN/LOSS metadata.
-- **News** — `src/services/news.ts` + `src/services/sentinel-scraper.ts`: ET RSS + Moneycontrol HTML merge, upsert to `news_context`.
+- **News** — `src/services/news.ts` + `src/services/sentinel-scraper.ts`: ET RSS + Moneycontrol HTML merge → **`news_context`** (daily). Backtest replay headlines come from **`news_archive`** + optional JSON via `src/services/historicalNewsFeed.ts`.
 - **NIFTY trend** — `src/services/niftyTrend.ts`: real-time EMA + VWAP trend string from Mongo 1m bars, passed to judge every tick.
 
 ---
@@ -248,8 +253,8 @@ See `docs/architecture.md` for the full system diagram and data flow.
 | `ohlc_1m` | `{ticker, ts, o, h, l, c, v}` — 1-minute candles |
 | `trades` | Live paper/live trade logs with AI reasoning |
 | `trades_backtest` | Backtest trades with full `entry + exit + result.pnl` |
-| `news_context` | `{date (YYYY-MM-DD), headlines[]}` — daily market news |
-| `news_archive` | Timestamped headlines for backtest replay |
+| `news_context` | **`date` (YYYY-MM-DD)** + `headlines[]` — one row per day; used by **live** `fetchTodayNewsContext` / RSS / scraper backfill |
+| `news_archive` | **`ts`** + `headlines[]` — time-stamped bundles; used by **backtest** `getHeadlinesForBacktest` (no lookahead: headlines with `ts ≤` simulated bar). Fill via `bun run backtest -- --import-news file.json` or your own inserts |
 | `active_watchlist` | `{_id: "current_session", tickers[]}` — current trading list |
 | `watchlist_snapshots` | Dated snapshots for no-lookahead backtest |
 | `lessons_learned` | Post-mortem summaries from analyst runs |

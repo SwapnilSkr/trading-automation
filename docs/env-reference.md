@@ -113,6 +113,8 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `DISCOVERY_SYMBOL_DELAY_MS` | `2000` | Pause between Nifty 100 symbols (daily fetch) |
 | `NIGHTLY_DISCOVERY` | `true` | Run discovery-sync automatically in POST_MORTEM |
 
+**CLI (not env):** `bun run discovery-sync -- --refresh-universe` downloads the [NSE Nifty 100 CSV](https://nsearchives.nseindia.com/content/indices/ind_nifty100list.csv) and updates `data/ind_nifty100list.csv` when valid. Default runs use the **on-disk CSV only**. **Nightly** in-process discovery does **not** set `refresh-universe` — use a weekend CLI run with `--refresh-universe` if you need the latest index constituents.
+
 ---
 
 ## Pre-open Pivot
@@ -144,6 +146,8 @@ Requires: `TRADING_TICKER_SOURCE=active_watchlist`
 | `HISTORICAL_NEWS_PATH` | `data/historical_news.json` | JSON file for backtest news replay |
 
 ET archive backfill uses the site’s `starttime-*` day URLs (not legacy `day-*`, which 404). Scrapers detect soft 404 HTML shells when present.
+
+**Collections:** `news_context` = daily rows for **live** `fetchTodayNewsContext`. **`news_archive`** = `ts` + headlines for **backtest** replay (`getHeadlinesForBacktest`); not filled by `backfill-news-scraper` — use `backtest --import-news` or `HISTORICAL_NEWS_PATH`. See `docs/architecture.md`.
 
 ---
 

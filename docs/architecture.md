@@ -253,6 +253,13 @@ Index: `{ticker, ts}` unique + `{ts: -1}`
 ```json
 { "date": "2026-04-18", "headlines": ["Budget 2026...", "RBI holds rates..."], "source": "ET-RSS+Sentinel" }
 ```
+**Use:** **Live** pipeline — `fetchTodayNewsContext`, `backfill-news-scraper`, RSS ingestion. Keyed by **calendar `date`** (YYYY-MM-DD).
+
+### news_archive
+```json
+{ "ts": ISODate, "headlines": ["..."], "source": "import-json" }
+```
+**Use:** **Backtest** replay only — `getHeadlinesForBacktest(sim)` loads rows with `ts ≤` the simulated bar time (causal headlines). Populate via `bun run backtest -- --import-news <file.json>` or direct Mongo writes. Optional merge with `HISTORICAL_NEWS_PATH` JSON.
 
 ---
 
