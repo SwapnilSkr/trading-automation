@@ -24,6 +24,18 @@ interface ScripRow {
 }
 
 /**
+ * NSE cash indices are not `*-EQ` equities; `searchScrip` + `-EQ` pick fails for them.
+ * Tokens from Angel OpenAPIScripMaster / forum (e.g. NIFTY 50 → 99926000). Volume is often 0.
+ */
+const NSE_INDEX_RESOLUTION: Record<
+  string,
+  { symboltoken: string; tradingsymbol: string }
+> = {
+  NIFTY50: { symboltoken: "99926000", tradingsymbol: "NIFTY 50" },
+  NIFTY: { symboltoken: "99926000", tradingsymbol: "NIFTY 50" },
+};
+
+/**
  * Angel One SmartAPI (REST) — aligns with official docs and JS SDK routes:
  * https://smartapi.angelone.in/docs
  * https://github.com/angel-one/smartapi-javascript/blob/main/config/api.js
@@ -280,6 +292,19 @@ export class AngelOneBroker implements BrokerClient {
     const hit = this.symbolCache.get(key);
     if (hit) return hit;
 
+    const baseNorm = baseTicker.replace(/-EQ$/i, "").toUpperCase();
+    if (env.angelExchange === "NSE") {
+      const idx = NSE_INDEX_RESOLUTION[baseNorm];
+      if (idx) {
+        const resolved = {
+          symboltoken: idx.symboltoken,
+          tradingsymbol: idx.tradingsymbol,
+        };
+        this.symbolCache.set(key, resolved);
+        return resolved;
+      }
+    }
+
     const res = await this.http.post(
       SmartApiPaths.searchScrip,
       {
@@ -298,14 +323,17 @@ export class AngelOneBroker implements BrokerClient {
     const rows = res.data as ScripRow[];
     const eq =
       rows.find((r) => r.tradingsymbol?.toUpperCase().endsWith("-EQ")) ??
+      rows.find((r) => r.symboltoken && r.tradingsymbol) ??
       rows[0];
-    if (!eq?.symboltoken || !eq.tradingsymbol) {
-      throw new Error(`Angel: no -EQ match for ${baseTicker}`);
+    if (!eq?.symboltoken) {
+      throw new Error(
+        `Angel: no scrip match for ${baseTicker} (try index token in OpenAPIScripMaster if benchmark)`
+      );
     }
 
     const resolved = {
       symboltoken: String(eq.symboltoken),
-      tradingsymbol: eq.tradingsymbol,
+      tradingsymbol: eq.tradingsymbol ?? baseTicker,
     };
     this.symbolCache.set(key, resolved);
     return resolved;
