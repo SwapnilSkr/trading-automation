@@ -9,6 +9,7 @@ import {
 import { embedCandlePattern } from "../embeddings/patternEmbedding.js";
 import {
   querySimilarPatterns,
+  type SimilarPattern,
   scoreFromNeighbors,
 } from "../pinecone/patternStore.js";
 import {
@@ -200,7 +201,11 @@ export class ExecutionEngine {
     }
 
     const vector = await embedCandlePattern(ctx.sessionCandles);
-    const neighbors = await querySimilarPatterns(vector, 8);
+    const rawNeighbors = await querySimilarPatterns(vector, 8);
+    const neighbors =
+      backtest?.simulatedAt !== undefined
+        ? filterCausalNeighborsForBacktest(rawNeighbors, backtest.simulatedAt)
+        : rawNeighbors;
     const mem = scoreFromNeighbors(neighbors, 0.72);
 
     let judgeInput: JudgeInput = {
@@ -255,9 +260,9 @@ export class ExecutionEngine {
     let judge: JudgeResult;
     if (backtest?.skipJudge) {
       judge = {
-        approve: false,
-        confidence: 0,
-        reasoning: "skipJudge: technicals only",
+        approve: true,
+        confidence: 0.5,
+        reasoning: "skipJudge: technical trigger auto-approved (LLM bypassed)",
       };
     } else if (pineconeGate) {
       judge = {
@@ -344,4 +349,20 @@ function normalizeSnapshot(
     if (v !== undefined) t[k] = v;
   }
   return t;
+}
+
+/**
+ * For replay, avoid lookahead from memory by allowing only patterns from dates
+ * strictly before the simulated session date.
+ */
+function filterCausalNeighborsForBacktest(
+  neighbors: SimilarPattern[],
+  simulatedAt: Date
+): SimilarPattern[] {
+  const simDay = DateTime.fromJSDate(simulatedAt, { zone: IST }).startOf("day");
+  return neighbors.filter((n) => {
+    const d = DateTime.fromISO(n.meta.date, { zone: IST });
+    if (!d.isValid) return false;
+    return d.startOf("day") < simDay;
+  });
 }

@@ -49,6 +49,20 @@ function parseArgs(): Record<string, string | boolean> {
   return out;
 }
 
+function parseWatchlistMode(
+  args: Record<string, string | boolean>
+): "static" | "snapshots" {
+  const byLegacyFlag = args["watchlist-snapshots"] === true;
+  const rawTickerSource = typeof args["ticker-source"] === "string"
+    ? String(args["ticker-source"]).trim().toLowerCase()
+    : undefined;
+  const byTickerSource = rawTickerSource === "snapshots";
+  if (rawTickerSource && rawTickerSource !== "snapshots" && rawTickerSource !== "static") {
+    throw new Error("[backtest] --ticker-source must be one of: static, snapshots");
+  }
+  return byLegacyFlag || byTickerSource ? "snapshots" : "static";
+}
+
 async function importNews(path: string): Promise<void> {
   if (!existsSync(path)) {
     throw new Error(`File not found: ${path}`);
@@ -81,9 +95,10 @@ async function main(): Promise<void> {
 
 Options:
   --tickers RELIANCE,TCS,INFY   (default: WATCHED_TICKERS from .env)
+  --ticker-source static|snapshots
   --use-active-watchlist        use tickers from Mongo active_watchlist (single list; lookahead bias)
-  --watchlist-snapshots         per-session tickers from watchlist_snapshots (no-lookahead; seed via discovery-sync --to)
-  --tickers-fallback A,B        with --watchlist-snapshots, used when a date has no snapshot
+  --watchlist-snapshots         alias for --ticker-source snapshots
+  --tickers-fallback A,B        with snapshot mode, used when a date has no snapshot
   --step 15                     minutes between simulated scans (default: 15)
   --judge-model <openrouter>    override JUDGE_MODEL_BACKTEST
   --skip-judge                  no LLM calls (technicals only path still evaluates)
@@ -97,7 +112,8 @@ Options:
   await ensureIndexes();
 
   let tickers: string[];
-  const snapshotMode = args["watchlist-snapshots"] === true;
+  const watchlistMode = parseWatchlistMode(args);
+  const snapshotMode = watchlistMode === "snapshots";
   if (args["use-active-watchlist"] === true && snapshotMode) {
     throw new Error(
       "[backtest] use only one of --use-active-watchlist or --watchlist-snapshots"
@@ -137,7 +153,7 @@ Options:
     to,
     tickers,
     stepMinutes,
-    watchlistMode: snapshotMode ? "snapshots" : "static",
+    watchlistMode,
   });
 
   const summary = await runBacktestReplay({
@@ -152,7 +168,7 @@ Options:
     skipJudge: args["skip-judge"] === true,
     skipOrders: args["allow-broker-orders"] !== true,
     persistTrades: args["no-persist"] !== true,
-    watchlistMode: snapshotMode ? "snapshots" : "static",
+    watchlistMode,
   });
 
   console.log("[backtest] done", summary);

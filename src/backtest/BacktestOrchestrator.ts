@@ -142,7 +142,12 @@ export async function runBacktestReplay(
 
         // 1. Check exits for open positions on this bar
         if (openPositions.length > 0) {
-          openPositions = await processBarForExits(openPositions, bar, exitParams);
+          openPositions = await processBarForExits(
+            openPositions,
+            bar,
+            exitParams,
+            config.persistTrades
+          );
         }
 
         // 2. Decide whether to run a scan at this bar
@@ -204,7 +209,7 @@ export async function runBacktestReplay(
       // 3. EOD: force-close everything at last bar's close
       const lastBar = sessionBars[sessionBars.length - 1]!;
       if (openPositions.length > 0) {
-        await closeAllAtEod(openPositions, lastBar, exitParams);
+        await closeAllAtEod(openPositions, lastBar, exitParams, config.persistTrades);
       }
     }
 

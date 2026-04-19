@@ -96,7 +96,8 @@ export function checkExitOnBar(
 export async function processBarForExits(
   positions: SimPosition[],
   bar: Ohlc1m,
-  params: ExitParams
+  params: ExitParams,
+  persist = true
 ): Promise<SimPosition[]> {
   const remaining: SimPosition[] = [];
   for (const pos of positions) {
@@ -110,7 +111,9 @@ export async function processBarForExits(
         outcome: result.outcome,
         pnl_percent: parseFloat((result.pnlPct * 100).toFixed(3)),
       };
-      await insertBacktestTrade(pos.doc);
+      if (persist) {
+        await insertBacktestTrade(pos.doc);
+      }
     } else {
       remaining.push({ ...pos, peakPrice: updatedPeak });
     }
@@ -124,7 +127,8 @@ export async function processBarForExits(
 export async function closeAllAtEod(
   positions: SimPosition[],
   lastBar: Ohlc1m,
-  params: ExitParams
+  params: ExitParams,
+  persist = true
 ): Promise<void> {
   for (const pos of positions) {
     const exitPrice = lastBar.c;
@@ -142,6 +146,8 @@ export async function closeAllAtEod(
       outcome,
       pnl_percent: parseFloat((pnlPct * 100).toFixed(3)),
     };
-    await insertBacktestTrade(pos.doc);
+    if (persist) {
+      await insertBacktestTrade(pos.doc);
+    }
   }
 }

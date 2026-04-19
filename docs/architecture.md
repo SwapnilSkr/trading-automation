@@ -76,6 +76,8 @@
 │                   │                                                 │
 │                   └─ (every stepMinutes) runScanningPass()          │
 │                        └─ same engine as live                        │
+│                             (but Pinecone neighbors are filtered     │
+│                              to dates before simulated day)          │
 │                             → onTradeEntry() → SimPosition          │
 │                                                                     │
 │  backtest-analyze → win rate, profit factor, Sharpe, max DD        │
@@ -205,6 +207,8 @@ It returns: `{approve: bool, confidence: 0–1, reasoning: string}`
 
 **Cost optimization — the Pinecone gate:**
 If the top Pinecone neighbor has cosine similarity ≥ 0.98 AND outcome = WIN, the trade is auto-approved without calling the LLM. After `weekend-optimize` fills Pinecone with thousands of patterns, most trades in familiar regimes skip the judge entirely.
+
+Backtest note: replay does not use live auto-gate approvals; it still queries Pinecone for context but only from dates strictly before the simulated session day (causal filter).
 
 Judge cooldown: 15 minutes per ticker in live mode (avoids LLM spam on choppy price action).
 

@@ -82,17 +82,21 @@ Expect: 30 min to several hours depending on how many tickers and candles are in
 
 **Run the backtest:**
 ```bash
-bun run backtest -- --from 2026-03-01 --to 2026-04-17 --ticker-source snapshots
+bun run backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots
 ```
 
 Flags explained:
 - `--from/--to`: IST date range (must have Mongo data for this window)
-- `--ticker-source snapshots`: uses `watchlist_snapshots` per day (no-lookahead — realistic)
+- `--watchlist-snapshots` (or `--ticker-source snapshots`): uses `watchlist_snapshots` per day (no-lookahead — realistic)
 - `--ticker-source static --tickers RELIANCE,TCS`: use fixed tickers every day
-- `--skip-judge`: deterministic, no LLM calls, fast (good for quick strategy validation)
+- `--skip-judge`: deterministic technical-only mode (bypasses LLM, auto-approves technical triggers)
 - `--no-persist`: dry run, don't write to trades_backtest
 
 The backtest now produces complete trades with entry + exit prices and PnL. It simulates stop-loss, profit target, and trailing stop bar-by-bar using actual 1m candle data.
+
+Bias control in replay:
+- Backtest memory lookup now uses only Pinecone neighbors from dates strictly before the simulated bar day (causal; no future-day leakage).
+- Keep `--watchlist-snapshots` enabled for realistic universe selection per day.
 
 **Analyze results:**
 ```bash
@@ -140,7 +144,7 @@ Repeat the backtest on a **different date range** than you tuned on:
 
 ```bash
 # You tuned on March–April → validate on January–February
-bun run backtest -- --from 2026-01-01 --to 2026-02-28 --ticker-source snapshots
+bun run backtest -- --from 2026-01-01 --to 2026-02-28 --watchlist-snapshots
 bun run backtest-analyze -- --last
 ```
 

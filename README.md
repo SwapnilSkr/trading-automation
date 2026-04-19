@@ -105,9 +105,10 @@ Walks 6 months of 1m candles for every ticker in Mongo, finds bars with >2% move
 
 ### Step 5 — Run the backtest
 ```bash
-bun run backtest -- --from 2026-03-01 --to 2026-04-17 --ticker-source snapshots
+bun run backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots
 ```
 Full bar-by-bar replay with exit simulation (stop/target/trailing). Writes to `trades_backtest` with complete entry + exit + PnL.
+Replay uses causal context: news is filtered by `ts <= simulated bar`, watchlist snapshots are date-bound, and Pinecone neighbors are filtered to dates strictly before the simulated session day.
 
 ### Step 6 — Analyze results
 ```bash
@@ -188,7 +189,8 @@ bun run discovery-sync -- --skip-ohlc           # score only, skip 1m backfill
 ```bash
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --tickers RELIANCE,TCS
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --ticker-source snapshots
-bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # deterministic, no LLM
+bun run backtest -- --from 2026-01-01 --to 2026-04-17 --watchlist-snapshots
+bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # technical-only deterministic mode, no LLM
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
 ```
 
