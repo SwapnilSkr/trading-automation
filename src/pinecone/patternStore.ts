@@ -18,6 +18,28 @@ function flatMeta(m: PatternMeta): Record<string, string | number | boolean> {
   };
 }
 
+/**
+ * Returns the subset of `ids` that already exist in the Pinecone namespace.
+ * Chunked to respect fetch limits. Missing API key → empty set (caller treats all as missing).
+ */
+export async function fetchExistingPatternIds(
+  ids: string[]
+): Promise<Set<string>> {
+  const pc = client();
+  if (!pc || ids.length === 0) return new Set();
+  const index = pc.index(env.pineconeIndex);
+  const ns = index.namespace(env.pineconeNamespace);
+  const existing = new Set<string>();
+  const chunk = Math.max(1, env.weekendOptimizeFetchBatch);
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const res = await ns.fetch({ ids: slice });
+    const records = res.records ?? {};
+    for (const id of Object.keys(records)) existing.add(id);
+  }
+  return existing;
+}
+
 export async function upsertPatternVector(
   id: string,
   vector: number[],

@@ -207,3 +207,64 @@ export async function getWatchlistSnapshotForEffectiveDate(
   const c = await col<WatchlistSnapshotDoc>(collections.watchlistSnapshots);
   return c.findOne({ effective_date: effectiveDate });
 }
+
+/** Single-doc checkpoint for `weekend-optimize` resume (per-ticker granularity). */
+export interface WeekendOptimizeCheckpointDoc extends Document {
+  _id: "current";
+  started_ist_date: string;
+  tickers_sig: string;
+  completed_tickers: string[];
+  updated_at: Date;
+}
+
+export async function getWeekendOptimizeCheckpoint(): Promise<WeekendOptimizeCheckpointDoc | null> {
+  const c = await col<WeekendOptimizeCheckpointDoc>(
+    collections.weekendOptimizeCheckpoint
+  );
+  return c.findOne({ _id: "current" });
+}
+
+export async function clearWeekendOptimizeCheckpoint(): Promise<void> {
+  const c = await col<WeekendOptimizeCheckpointDoc>(
+    collections.weekendOptimizeCheckpoint
+  );
+  await c.deleteOne({ _id: "current" });
+}
+
+export async function saveWeekendOptimizeCheckpoint(
+  doc: Pick<
+    WeekendOptimizeCheckpointDoc,
+    "started_ist_date" | "tickers_sig" | "completed_tickers"
+  >
+): Promise<void> {
+  const c = await col<WeekendOptimizeCheckpointDoc>(
+    collections.weekendOptimizeCheckpoint
+  );
+  await c.updateOne(
+    { _id: "current" },
+    {
+      $set: {
+        started_ist_date: doc.started_ist_date,
+        tickers_sig: doc.tickers_sig,
+        completed_tickers: doc.completed_tickers,
+        updated_at: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+}
+
+export async function weekendOptimizeAppendCompletedTicker(
+  ticker: string
+): Promise<void> {
+  const c = await col<WeekendOptimizeCheckpointDoc>(
+    collections.weekendOptimizeCheckpoint
+  );
+  await c.updateOne(
+    { _id: "current" },
+    {
+      $addToSet: { completed_tickers: ticker },
+      $set: { updated_at: new Date() },
+    }
+  );
+}

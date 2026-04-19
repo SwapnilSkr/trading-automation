@@ -20,6 +20,9 @@ Full list of all `.env` variables, their defaults, and when to change them.
 | `PINECONE_API_KEY` | — | Required |
 | `PINECONE_INDEX` | `trading-patterns` | Index must exist: cosine, 1536 dims |
 | `PINECONE_NAMESPACE` | `golden-patterns` | Namespace within index |
+| `WEEKEND_OPTIMIZE_SKIP_EXISTING` | `true` | When `true`, `weekend-optimize` batch-fetches Pinecone by id and skips OpenAI embed + upsert if the vector already exists |
+| `WEEKEND_OPTIMIZE_RESUME` | `true` | When `true`, persists per-ticker progress in Mongo so an interrupted run can skip finished tickers the same IST calendar day (same ticker universe). Use CLI `--no-resume` to force a clean checkpoint for that run |
+| `WEEKEND_OPTIMIZE_FETCH_BATCH` | `100` | Max ids per Pinecone `fetch` when checking existence |
 
 ---
 

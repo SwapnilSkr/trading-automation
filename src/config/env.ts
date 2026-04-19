@@ -118,6 +118,14 @@ export const env = {
   pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
   pineconeGateMinScore: num("PINECONE_GATE_MIN_SCORE", 0.98),
 
+  /** Skip OpenAI embed + Pinecone upsert when vector id already exists (weekend-optimize) */
+  weekendOptimizeSkipExisting:
+    process.env.WEEKEND_OPTIMIZE_SKIP_EXISTING !== "false",
+  /** Resume weekend-optimize across tickers after interrupt (same IST day + same ticker set) */
+  weekendOptimizeResume: process.env.WEEKEND_OPTIMIZE_RESUME !== "false",
+  /** Pinecone fetch batch size for existence checks */
+  weekendOptimizeFetchBatch: num("WEEKEND_OPTIMIZE_FETCH_BATCH", 100),
+
   /**
    * If set, `POST /v1/emergency/square-off` requires header `X-Emergency-Key: <value>`.
    * Empty disables the route (returns 404).

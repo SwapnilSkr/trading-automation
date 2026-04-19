@@ -30,4 +30,5 @@ export const collections = {
   newsArchive: "news_archive",
   activeWatchlist: "active_watchlist",
   watchlistSnapshots: "watchlist_snapshots",
+  weekendOptimizeCheckpoint: "weekend_optimize_checkpoint",
 } as const;

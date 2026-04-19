@@ -74,6 +74,8 @@ After this runs, the live system can auto-approve trades that closely match hist
 
 Expect: 30 min to several hours depending on how many tickers and candles are in Mongo.
 
+**If the job stops mid-run** (laptop sleep, crash): it does **not** have to redo everything. By default, progress is stored in Mongo (`weekend_optimize_checkpoint`): on the **same IST calendar day** with the **same ticker universe**, finished tickers are skipped. For any ticker you run again, vectors whose ids already exist in Pinecone skip OpenAI embedding and upsert (cheap Pinecone `fetch` batches). If you resume on a **later calendar day**, the checkpoint is reset, but **Pinecone still skips** existing ids so you do not pay again for embeddings already stored. Use `--no-resume` to ignore the checkpoint for that run, and `--re-embed-all` to force fresh embeddings even when ids exist. See `docs/env-reference.md` for `WEEKEND_OPTIMIZE_*` toggles.
+
 ---
 
 ### Phase 3 — Backtest and analyze
