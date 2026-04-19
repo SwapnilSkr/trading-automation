@@ -2,6 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import { env } from "../config/env.js";
 import { getNewsForDate, upsertNews } from "../db/repositories.js";
 import {
+  fetchTextResilient,
   scrapeMoneycontrolHeadlines,
 } from "./sentinel-scraper.js";
 import { istDateString } from "../time/ist.js";
@@ -36,18 +37,19 @@ function itemTitle(item: unknown): string | null {
 /** RSS titles only (no Mongo write). */
 export async function pullRssHeadlines(): Promise<string[]> {
   const url = env.newsEtRssUrl;
-  const res = await fetch(url, {
-    headers: {
+  const { ok, status, text: xml } = await fetchTextResilient(
+    url,
+    {
       "User-Agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       Accept: "application/rss+xml, application/xml, text/xml, */*",
+      "Accept-Language": "en-IN,en;q=0.9",
     },
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!res.ok) {
-    throw new Error(`RSS HTTP ${res.status}`);
+    env.sentinelTimeoutMs
+  );
+  if (!ok) {
+    throw new Error(`RSS HTTP ${status}`);
   }
-  const xml = await res.text();
   const parsed = parser.parse(xml);
   const rawItems = rssItemsFromParsed(parsed);
   return rawItems

@@ -51,6 +51,9 @@ export const env = {
     process.env.SENTINEL_MC_URL ??
     "https://www.moneycontrol.com/news/business/markets/",
   sentinelTimeoutMs: num("SENTINEL_TIMEOUT_MS", 15_000),
+  /** Retries for RSS / HTML scrape (5xx, 429, transient network) */
+  sentinelMaxRetries: num("SENTINEL_MAX_RETRIES", 4),
+  sentinelRetryBaseMs: num("SENTINEL_RETRY_BASE_MS", 700),
 
   /** Delay between ET archive day requests (backfill-news-scraper) */
   archiveScraperDelayMs: num("ARCHIVE_SCRAPER_DELAY_MS", 2500),
