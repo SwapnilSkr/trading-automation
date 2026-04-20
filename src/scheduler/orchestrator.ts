@@ -107,14 +107,16 @@ export class TradingOrchestrator {
             newsHeadlines: news,
           });
         }
-        try {
-          const positions = await this.broker.listOpenPositions();
-          this.engine.setOpenCount(positions.length);
-        } catch (e) {
-          console.error(
-            "[Orchestrator] listOpenPositions failed (continuing with previous open count)",
-            e
-          );
+        if (env.executionEnv === "LIVE") {
+          try {
+            const positions = await this.broker.listOpenPositions();
+            this.engine.setOpenCount(positions.length);
+          } catch (e) {
+            console.error(
+              "[Orchestrator] listOpenPositions failed (continuing with previous open count)",
+              e
+            );
+          }
         }
         break;
       }
@@ -137,7 +139,14 @@ export class TradingOrchestrator {
               end
             );
           }
-          await this.broker.closeIntraday(ticker);
+          if (env.executionEnv === "LIVE") {
+            try {
+              await this.broker.closeIntraday(ticker);
+            } catch (e) {
+              // Do not stop local exit persistence because one broker close failed.
+              console.error(`[Orchestrator] closeIntraday failed ${ticker}`, e);
+            }
+          }
         }
         this.engine.setOpenCount(0);
         break;

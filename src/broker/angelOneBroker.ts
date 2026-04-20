@@ -51,6 +51,9 @@ export class AngelOneBroker implements BrokerClient {
     string,
     { symboltoken: string; tradingsymbol: string }
   >();
+  private positionsCache:
+    | { atMs: number; rows: BrokerPosition[] }
+    | undefined;
 
   constructor() {
     this.http = new SmartApiHttp(
@@ -392,8 +395,14 @@ export class AngelOneBroker implements BrokerClient {
   }
 
   async closeIntraday(ticker: string): Promise<void> {
+    if (env.executionEnv !== "LIVE") {
+      console.log("[Angel] EXECUTION_ENV!=LIVE — skip broker square-off", {
+        ticker,
+      });
+      return;
+    }
     const token = await this.authorized();
-    const positions = await this.listOpenPositionsFromApi(token);
+    const positions = await this.listOpenPositionsCached(token);
     const base = ticker.toUpperCase().replace(/-EQ$/i, "");
     const pos = positions.find(
       (p) =>
@@ -409,11 +418,29 @@ export class AngelOneBroker implements BrokerClient {
       qty: pos.qty,
       strategy: "SQUARE_OFF",
     });
+    // Position state changed; force refresh on the next query.
+    this.positionsCache = undefined;
   }
 
   async listOpenPositions(): Promise<BrokerPosition[]> {
+    if (env.executionEnv !== "LIVE") {
+      return [];
+    }
     const token = await this.authorized();
-    return this.listOpenPositionsFromApi(token);
+    return this.listOpenPositionsCached(token);
+  }
+
+  private async listOpenPositionsCached(
+    token: string
+  ): Promise<BrokerPosition[]> {
+    const now = Date.now();
+    const ttlMs = 10_000;
+    if (this.positionsCache && now - this.positionsCache.atMs < ttlMs) {
+      return this.positionsCache.rows;
+    }
+    const rows = await this.listOpenPositionsFromApi(token);
+    this.positionsCache = { atMs: now, rows };
+    return rows;
   }
 
   private async listOpenPositionsFromApi(

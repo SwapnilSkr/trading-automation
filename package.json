@@ -19,7 +19,8 @@
     "backtest-ablation": "bun run src/cli/backtest-ablation.ts --",
     "backtest-analyze": "bun run src/cli/backtest-analyze.ts --",
     "live-analyze": "bun run src/cli/live-analyze.ts --",
-    "migrate-live-trades": "bun run src/cli/migrate-live-trades.ts --"
+    "migrate-live-trades": "bun run src/cli/migrate-live-trades.ts --",
+    "reconcile-live-exits": "bun run src/cli/reconcile-live-exits.ts --"
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^7.2.0",
