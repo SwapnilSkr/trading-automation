@@ -166,6 +166,7 @@ curl http://127.0.0.1:3000/health
 | `bun run backfill-news-scraper` | Scrape ET archive headlines into news_context |
 | `bun run weekend-optimize` | Mine price patterns from all Mongo tickers → Pinecone |
 | `bun run backtest` | Full replay with PnL simulation → trades_backtest |
+| `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
@@ -192,6 +193,9 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --ticker-source snapshots
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --watchlist-snapshots
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # technical-only deterministic mode, no LLM
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
+# one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
+# options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.

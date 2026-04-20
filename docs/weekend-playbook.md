@@ -85,6 +85,17 @@ Expect: 30 min to several hours depending on how many tickers and candles are in
 bun run backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots
 ```
 
+**One-command pipeline (recommended when snapshots exist but OHLC coverage is partial):**
+```bash
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
+```
+This performs sequence in one run:
+1. loads snapshot ticker union for the date range
+2. syncs 1m OHLC for those names and dates
+3. clears `trades_backtest`
+4. runs backtest with `watchlist-snapshots`
+5. runs analyze for the generated run id
+
 Flags explained:
 - `--from/--to`: IST date range (must have Mongo data for this window)
 - `--watchlist-snapshots` (or `--ticker-source snapshots`): uses `watchlist_snapshots` per day (no-lookahead — realistic)
