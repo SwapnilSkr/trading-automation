@@ -91,11 +91,12 @@ bun run sync-history -- --days 30 --ticker NIFTY50
 ```
 The judge needs NIFTY50 data to say "market is bullish/bearish today." Without this it gets no macro context.
 
-### Step 3 — Backfill daily news (`news_context`) for live / same-day use
+### Step 3 — Backfill daily news for live AND backtest use
 ```bash
-bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17
+# Fills news_context (live daemon judge context) + news_archive (backtest replay headlines)
+bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17 --output-archive
 ```
-Writes **one row per calendar day** into Mongo **`news_context`** (used by **`fetchTodayNewsContext`** in the live daemon and for “today’s” ingestion). **Bar replay backtests** do **not** read `news_context`; they use **`news_archive`** (timestamped rows) and/or **`HISTORICAL_NEWS_PATH`** JSON — see [MongoDB collections](#mongodb-collections) and `bun run backtest -- --import-news <file.json>`.
+Writes **one row per calendar day** into Mongo ``news_context`` (used by ``fetchTodayNewsContext`` in the live daemon). With ``--output-archive``, also writes ``news_archive`` (timestamped at 09:30 IST per day) so backtest replay gets causal news headlines. **Bar replay backtests** do **not** read `news_context`; they use ``news_archive`` and/or ``HISTORICAL_NEWS_PATH`` JSON — see [MongoDB collections](#mongodb-collections).
 
 ### Step 4 — Mine price patterns into Pinecone
 ```bash

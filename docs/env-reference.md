@@ -217,7 +217,7 @@ Requires: `TRADING_TICKER_SOURCE=active_watchlist`
 
 ET archive backfill uses the site’s `starttime-*` day URLs (not legacy `day-*`, which 404). Scrapers detect soft 404 HTML shells when present.
 
-**Collections:** `news_context` = daily rows for **live** `fetchTodayNewsContext`. **`news_archive`** = `ts` + headlines for **backtest** replay (`getHeadlinesForBacktest`); not filled by `backfill-news-scraper` — use `backtest --import-news` or `HISTORICAL_NEWS_PATH`. See `docs/architecture.md`.
+**Collections:** `news_context` = daily rows for **live** `fetchTodayNewsContext`; filled by `backfill-news-scraper`. **`news_archive`** = `ts` + headlines for **backtest** replay (`getHeadlinesForBacktest`); fill with `backfill-news-scraper --output-archive`, or `backtest --import-news`, or via `HISTORICAL_NEWS_PATH`. See `docs/architecture.md`.
 
 ---
 

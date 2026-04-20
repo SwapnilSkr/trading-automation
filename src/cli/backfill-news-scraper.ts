@@ -9,7 +9,8 @@
 import "dotenv/config";
 import { DateTime } from "luxon";
 import { env } from "../config/env.js";
-import { ensureIndexes, upsertNews } from "../db/repositories.js";
+import { ensureIndexes, upsertNews, bulkInsertNewsArchive } from "../db/repositories.js";
+import type { NewsArchiveDoc } from "../types/domain.js";
 import { runCli } from "./runCli.js";
 import {
   filterMarketHeadlines,
@@ -18,11 +19,12 @@ import {
 } from "../services/sentinel-scraper.js";
 import { IST, isIndianWeekday } from "../time/ist.js";
 
-function parseArgs(): { from: string; to: string; filter: boolean } {
+function parseArgs(): { from: string; to: string; filter: boolean; outputArchive: boolean } {
   const argv = process.argv.slice(2);
   let from = "";
   let to = "";
   let filter = true;
+  let outputArchive = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--from" && argv[i + 1]) {
@@ -37,18 +39,22 @@ function parseArgs(): { from: string; to: string; filter: boolean } {
       filter = false;
       continue;
     }
+    if (a === "--output-archive") {
+      outputArchive = true;
+      continue;
+    }
   }
   if (!from || !to) {
     console.error(
-      "Usage: bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD [--no-filter]"
+      "Usage: bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD [--no-filter] [--output-archive]"
     );
     throw new Error("Missing --from / --to");
   }
-  return { from, to, filter };
+  return { from, to, filter, outputArchive };
 }
 
 async function main(): Promise<void> {
-  const { from, to, filter } = parseArgs();
+  const { from, to, filter, outputArchive } = parseArgs();
   const start = DateTime.fromISO(from, { zone: IST }).startOf("day");
   const end = DateTime.fromISO(to, { zone: IST }).startOf("day");
   if (!start.isValid || !end.isValid) {
@@ -56,6 +62,7 @@ async function main(): Promise<void> {
   }
 
   await ensureIndexes();
+  const archiveRows: NewsArchiveDoc[] = [];
   let d = start;
   while (d <= end) {
     if (isIndianWeekday(d)) {
@@ -76,6 +83,16 @@ async function main(): Promise<void> {
             source: "ET-archive-scraper",
             updated_at: new Date(),
           });
+
+          if (outputArchive) {
+            const ts = d.set({ hour: 9, minute: 30 }).toJSDate();
+            archiveRows.push({
+              ts,
+              headlines: top,
+              source: "ET-archive-scraper",
+            });
+          }
+
           console.log(`[archive] ${dateStr}: ${top.length} headlines`);
         } else {
           console.warn(`[archive] ${dateStr}: no headlines after filter`);
@@ -88,6 +105,11 @@ async function main(): Promise<void> {
       }
     }
     d = d.plus({ days: 1 });
+  }
+
+  if (outputArchive && archiveRows.length > 0) {
+    const inserted = await bulkInsertNewsArchive(archiveRows);
+    console.log(`[backfill-news-scraper] wrote ${inserted} rows to news_archive`);
   }
 
   console.log("[backfill-news-scraper] done");

@@ -43,13 +43,14 @@ bun run sync-history -- --days 30 --ticker NIFTY50
 ```
 The live judge receives a string like `"NIFTY50 bearish trend, -0.8% from open, below VWAP"` from Mongo 1m data. Without this, the judge gets no macro filter.
 
-**1c. Backfill daily news (`news_context`)**
+**1c. Backfill daily news**
 ```bash
-bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17
+# Fills news_context (live) AND news_archive (backtest replay) in one pass
+bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17 --output-archive
 ```
-Scrapes ET archive headlines per day into Mongo **`news_context`** (one document per **`date`**, used by **`fetchTodayNewsContext`** for **live** / same-day judge context).
+Scrapes ET archive headlines per day into Mongo **`news_context`** (one document per **`date`**, used by **`fetchTodayNewsContext`** for **live** / same-day judge context). With **`--output-archive`**, also writes **`news_archive`** (one document per weekday with `ts` = 09:30 IST that day) — required for backtest replay headlines.
 
-**Backtests** read **`news_archive`** (documents with a **`ts`** field) and optional **`HISTORICAL_NEWS_PATH`** JSON — not `news_context`. To give the judge headlines during replay, use e.g. `bun run backtest -- --import-news your.json` (loads into `news_archive`) or maintain `data/historical_news.json`. See `README.md` → MongoDB collections.
+If you only need live news context, omit `--output-archive`. If you only need backtest news (no live), run with **`--output-archive`** alone and skip the live context write.
 
 Expect: ~2–3 min (2.5s delay between days; scraper retries on transient failures)
 

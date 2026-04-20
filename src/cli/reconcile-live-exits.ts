@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       order_executed: { $ne: false },
       result: { $exists: false },
       side: { $in: ["BUY", "SELL"] },
-      entry_price: { $type: "number" },
+      entry_price: { $exists: true },
     })
     .sort({ entry_time: 1 })
     .toArray()) as Array<TradeLogDoc & { _id: ObjectId }>;
@@ -89,6 +89,10 @@ async function main(): Promise<void> {
   let updated = 0;
   let skippedNoBar = 0;
   for (const t of unresolved) {
+    if ((t.side !== "BUY" && t.side !== "SELL") || typeof t.entry_price !== "number") {
+      skippedNoBar++;
+      continue;
+    }
     const lastBar = await ohlc
       .find({
         ticker: t.ticker,
@@ -101,7 +105,7 @@ async function main(): Promise<void> {
       skippedNoBar++;
       continue;
     }
-    const result = computeResult(t.side!, t.entry_price!, lastBar.c);
+    const result = computeResult(t.side, t.entry_price, lastBar.c);
     if (!dryRun) {
       await trades.updateOne(
         { _id: t._id },
@@ -125,4 +129,3 @@ async function main(): Promise<void> {
 }
 
 runCli(main);
-

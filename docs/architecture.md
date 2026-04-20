@@ -257,13 +257,13 @@ Index: `{ticker, ts}` unique + `{ts: -1}`
 ```json
 { "date": "2026-04-18", "headlines": ["Budget 2026...", "RBI holds rates..."], "source": "ET-RSS+Sentinel" }
 ```
-**Use:** **Live** pipeline — `fetchTodayNewsContext`, `backfill-news-scraper`, RSS ingestion. Keyed by **calendar `date`** (YYYY-MM-DD).
+**Use:** **Live** pipeline — `fetchTodayNewsContext`, `backfill-news-scraper` (with or without `--output-archive`). Keyed by **calendar `date`** (YYYY-MM-DD). Also backfilled in bulk via `bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD`.
 
 ### news_archive
 ```json
-{ "ts": ISODate, "headlines": ["..."], "source": "import-json" }
+{ "ts": ISODate, "headlines": ["..."], "source": "ET-archive-scraper" }
 ```
-**Use:** **Backtest** replay only — `getHeadlinesForBacktest(sim)` loads rows with `ts ≤` the simulated bar time (causal headlines). Populate via `bun run backtest -- --import-news <file.json>` or direct Mongo writes. Optional merge with `HISTORICAL_NEWS_PATH` JSON.
+**Use:** **Backtest** replay only — `getHeadlinesForBacktest(sim)` loads rows with `ts ≤` the simulated bar time (causal headlines). Populate via `bun run backfill-news-scraper -- --output-archive` (writes one doc per weekday with `ts` = 09:30 IST that day), or `bun run backtest -- --import-news <file.json>` for JSON imports. Optional merge with `HISTORICAL_NEWS_PATH` JSON.
 
 ---
 
