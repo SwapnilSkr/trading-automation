@@ -21,6 +21,7 @@ interface Args {
   noSync: boolean;
   noAnalyze: boolean;
   noPersist: boolean;
+  forceSyncAll: boolean;
   tickersFallback: string[];
 }
 
@@ -35,6 +36,7 @@ function parseArgs(): Args {
   let noSync = false;
   let noAnalyze = false;
   let noPersist = false;
+  let forceSyncAll = false;
   let tickersFallback: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -75,6 +77,10 @@ function parseArgs(): Args {
       noPersist = true;
       continue;
     }
+    if (a === "--force-sync-all") {
+      forceSyncAll = true;
+      continue;
+    }
     if (a === "--tickers-fallback" && argv[i + 1]) {
       tickersFallback = argv[++i]!
         .split(",")
@@ -96,6 +102,7 @@ Options:
   --no-sync                       skip OHLC sync for snapshot tickers
   --no-analyze                    skip post-run analyzer
   --no-persist                    do not write trades_backtest
+  --force-sync-all                disable coverage precheck and sync every ticker
   --tickers-fallback A,B          fallback if no snapshots in range
 `);
   }
@@ -110,6 +117,7 @@ Options:
     noSync,
     noAnalyze,
     noPersist,
+    forceSyncAll,
     tickersFallback,
   };
 }
@@ -149,6 +157,80 @@ async function maybeClearTradesBacktest(enabled: boolean): Promise<void> {
   console.log(`[backtest-snapshots] cleared trades_backtest rows: ${r.deletedCount}`);
 }
 
+async function tickersNeedingSync(
+  tickers: string[],
+  from: Date,
+  to: Date
+): Promise<{
+  needsSync: string[];
+  covered: string[];
+  activeSessionDays: number;
+}> {
+  if (tickers.length === 0) {
+    return { needsSync: [], covered: [], activeSessionDays: 0 };
+  }
+  const db = await getDb();
+  const c = db.collection(collections.ohlc1m);
+  const rows = await c
+    .aggregate<{
+      _id: string;
+      daysPresent: number;
+      activeDays: string[];
+    }>([
+      {
+        $match: {
+          ticker: { $in: tickers },
+          ts: { $gte: from, $lte: to },
+        },
+      },
+      {
+        $project: {
+          ticker: 1,
+          day: {
+            $dateToString: {
+              date: "$ts",
+              format: "%Y-%m-%d",
+              timezone: IST,
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$ticker",
+          daysSet: { $addToSet: "$day" },
+        },
+      },
+      {
+        $project: {
+          daysPresent: { $size: "$daysSet" },
+          activeDays: "$daysSet",
+        },
+      },
+    ])
+    .toArray();
+
+  const byTicker = new Map<string, number>();
+  const allDays = new Set<string>();
+  for (const r of rows) {
+    byTicker.set(r._id, r.daysPresent);
+    for (const d of r.activeDays) allDays.add(d);
+  }
+  const activeSessionDays = allDays.size;
+  if (activeSessionDays === 0) {
+    return { needsSync: [...tickers], covered: [], activeSessionDays: 0 };
+  }
+
+  const covered: string[] = [];
+  const needsSync: string[] = [];
+  for (const t of tickers) {
+    const days = byTicker.get(t) ?? 0;
+    if (days >= activeSessionDays) covered.push(t);
+    else needsSync.push(t);
+  }
+  return { needsSync, covered, activeSessionDays };
+}
+
 function runAnalyzerFor(runId: string): void {
   const r = spawnSync(
     "bun",
@@ -183,15 +265,40 @@ async function main(): Promise<void> {
   );
 
   if (!args.noSync) {
-    const broker = createBroker();
-    await broker.authenticate();
-    console.log("[backtest-snapshots] syncing 1m OHLC for snapshot tickers...");
-    const synced = await syncOhlcForRange(broker, range.from, range.to, tickers);
-    const withBars = synced.filter((x) => x.bars > 0).length;
-    const totalBars = synced.reduce((s, x) => s + x.bars, 0);
-    console.log(
-      `[backtest-snapshots] sync done: ${withBars}/${synced.length} tickers returned bars, total bars=${totalBars}`
-    );
+    const toSync = args.forceSyncAll
+      ? {
+          needsSync: tickers,
+          covered: [] as string[],
+          activeSessionDays: 0,
+        }
+      : await tickersNeedingSync(tickers, range.from, range.to);
+
+    if (!args.forceSyncAll) {
+      console.log(
+        `[backtest-snapshots] coverage precheck: covered=${toSync.covered.length} missing=${toSync.needsSync.length} activeDays=${toSync.activeSessionDays}`
+      );
+    }
+
+    if (toSync.needsSync.length === 0) {
+      console.log("[backtest-snapshots] sync skipped: all snapshot tickers already covered");
+    } else {
+      const broker = createBroker();
+      await broker.authenticate();
+      console.log(
+        `[backtest-snapshots] syncing 1m OHLC for ${toSync.needsSync.length} tickers...`
+      );
+      const synced = await syncOhlcForRange(
+        broker,
+        range.from,
+        range.to,
+        toSync.needsSync
+      );
+      const withBars = synced.filter((x) => x.bars > 0).length;
+      const totalBars = synced.reduce((s, x) => s + x.bars, 0);
+      console.log(
+        `[backtest-snapshots] sync done: ${withBars}/${synced.length} tickers returned bars, total bars=${totalBars}`
+      );
+    }
   } else {
     console.log("[backtest-snapshots] --no-sync enabled (skipping OHLC backfill)");
   }

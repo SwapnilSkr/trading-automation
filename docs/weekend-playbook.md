@@ -91,7 +91,7 @@ bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
 ```
 This performs sequence in one run:
 1. loads snapshot ticker union for the date range
-2. syncs 1m OHLC for those names and dates
+2. syncs 1m OHLC only for names missing coverage in that range (saves API calls)
 3. clears `trades_backtest`
 4. runs backtest with `watchlist-snapshots`
 5. runs analyze for the generated run id

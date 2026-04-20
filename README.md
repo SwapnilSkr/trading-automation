@@ -195,7 +195,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # techni
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
 # one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
-# options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B
+# options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.
