@@ -169,6 +169,7 @@ curl http://127.0.0.1:3000/health
 | `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze |
 | `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
+| `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
 ### sync-history flags
@@ -210,6 +211,12 @@ Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and c
 bun run backtest-analyze -- --last              # latest run
 bun run backtest-analyze -- --run-id bt-1234   # specific run
 bun run backtest-analyze                       # all backtest trades combined
+```
+
+### live-analyze flags
+```bash
+bun run live-analyze                            # today IST
+bun run live-analyze -- --date 2026-04-20      # specific IST date
 ```
 
 ---
@@ -305,8 +312,32 @@ pm2 logs trading-bot
 pm2 monit
 ```
 
+### Terminal workflow (recommended)
+
+Terminal 1 (ops/run terminal):
+```bash
+bun run build
+pm2 start ecosystem.config.cjs
+pm2 status
+pm2 logs trading-bot --lines 100
+```
+Keep this terminal for PM2 status/logs/restarts.
+
+Terminal 2 (manual checks/commands):
+```bash
+bun run live-analyze
+bun run analyst
+```
+Use this terminal for on-demand reports and post-mortem runs.
+
+If you edit `.env` or code later:
+```bash
+pm2 restart ecosystem.config.cjs --update-env
+```
+
 PM2 processes:
 - `trading-bot` — main daemon, autorestart, runs 24/7
+- `evening-live-analyze` — 15:35 IST weekdays, end-of-day numeric stats from `trades`
 - `evening-analyst` — 15:45 IST weekdays, post-mortem → lessons_learned
 - `nightly-discovery` — 18:20 IST weekdays, Nifty 100 rescore (backup to in-process nightly)
 

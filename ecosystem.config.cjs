@@ -22,6 +22,16 @@ module.exports = {
       timezone: "Asia/Kolkata",
     },
     {
+      name: "evening-live-analyze",
+      script: "dist/live-analyze.js",
+      cwd: __dirname,
+      interpreter: "node",
+      env_file: ".env",
+      autorestart: false,
+      cron_restart: "35 15 * * 1-5",
+      timezone: "Asia/Kolkata",
+    },
+    {
       name: "nightly-discovery",
       script: "dist/discovery-sync.js",
       args: "--top 10 --days 5",

@@ -104,7 +104,18 @@ export class TradingOrchestrator {
       }
       case "SQUARE_OFF": {
         const watch = await resolveWatchlistTickers();
+        const day = nowIST().startOf("day").toJSDate();
+        const end = nowIST().toJSDate();
         for (const ticker of watch) {
+          const candles = await fetchOhlcRange(ticker, day, end);
+          const last = candles[candles.length - 1];
+          if (last) {
+            await this.engine.forceSquareOffTrackedPosition(
+              ticker,
+              last.c,
+              end
+            );
+          }
           await this.broker.closeIntraday(ticker);
         }
         this.engine.setOpenCount(0);

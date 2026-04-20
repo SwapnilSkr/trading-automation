@@ -200,6 +200,11 @@ bun run start
 
 The daemon will handle everything from here: pre-open pivot at 09:10, news refresh, live scanning, exit management, and nightly discovery.
 
+Production PM2 terminal split:
+- Terminal 1 (ops/run): `bun run build` → `pm2 start ecosystem.config.cjs` → `pm2 status` → `pm2 logs trading-bot --lines 100`
+- Terminal 2 (manual reports): `bun run live-analyze` and `bun run analyst`
+- After `.env` or code edits: `pm2 restart ecosystem.config.cjs --update-env`
+
 ---
 
 ## Routine weekly schedule

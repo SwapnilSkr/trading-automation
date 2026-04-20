@@ -16,6 +16,7 @@ import {
   fetchOhlcRange,
   insertBacktestTrade,
   insertTrade,
+  updateTradeExit,
 } from "../db/repositories.js";
 import {
   evaluateEma20BreakRetest,
@@ -38,6 +39,7 @@ import { priorDayHighLow } from "../indicators/bigBoy.js";
 import { checkSafety, createSafetyState, type SafetyState } from "./safety.js";
 import { DateTime } from "luxon";
 import { IST, nowIST } from "../time/ist.js";
+import type { ObjectId } from "mongodb";
 
 export interface BacktestPassOptions {
   /** Wall-clock time being simulated (IST session context) */
@@ -68,6 +70,7 @@ interface LivePosition {
   entryTime: Date;
   peakPrice: number;
   strategy: string;
+  tradeId?: ObjectId;
 }
 
 export class ExecutionEngine {
@@ -140,10 +143,34 @@ export class ExecutionEngine {
       await this.broker.closeIntraday(ticker);
       this.livePositions.delete(ticker);
       this.openCount = Math.max(0, this.openCount - 1);
-      const pnl = pos.side === "BUY"
-        ? (bar.c - pos.entryPrice)
-        : (pos.entryPrice - bar.c);
+      const result = this.liveResultFromExit(pos, bar.c);
+      const pnl = result.pnl;
       this.recordPnl(pnl);
+      if (pos.tradeId) {
+        await updateTradeExit(pos.tradeId, {
+          exit_time: bar.ts,
+          result,
+        });
+      }
+    }
+  }
+
+  async forceSquareOffTrackedPosition(
+    ticker: string,
+    exitPrice: number,
+    exitTime: Date
+  ): Promise<void> {
+    const pos = this.livePositions.get(ticker);
+    if (!pos) return;
+    this.livePositions.delete(ticker);
+    this.openCount = Math.max(0, this.openCount - 1);
+    const result = this.liveResultFromExit(pos, exitPrice);
+    this.recordPnl(result.pnl);
+    if (pos.tradeId) {
+      await updateTradeExit(pos.tradeId, {
+        exit_time: exitTime,
+        result,
+      });
     }
   }
 
@@ -380,6 +407,7 @@ export class ExecutionEngine {
       checkSafety(this.safety, this.openCount) &&
       !backtest?.skipOrders;
 
+    let liveEntryPersisted = false;
     if (doOrder) {
       await this.broker.placePaperOrder({
         ticker,
@@ -390,6 +418,8 @@ export class ExecutionEngine {
       this.openCount += 1;
       // Track position for live stop/target management
       if (!backtest) {
+        const tradeId = await insertTrade(doc);
+        liveEntryPersisted = true;
         this.livePositions.set(ticker, {
           ticker,
           side,
@@ -397,6 +427,7 @@ export class ExecutionEngine {
           entryTime: entryTime,
           peakPrice: entryPrice,
           strategy: hit.strategy,
+          tradeId,
         });
       }
     }
@@ -407,8 +438,29 @@ export class ExecutionEngine {
     } else if (backtest?.persistBacktest) {
       await insertBacktestTrade(doc);
     } else if (!backtest) {
-      await insertTrade(doc);
+      if (!liveEntryPersisted) {
+        await insertTrade(doc);
+      }
     }
+  }
+
+  private liveResultFromExit(
+    pos: LivePosition,
+    exitPrice: number
+  ): NonNullable<TradeLogDoc["result"]> {
+    const pnlRaw =
+      pos.side === "BUY" ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice;
+    const pnl = parseFloat(pnlRaw.toFixed(2));
+    const pctBase = Math.max(1e-9, pos.entryPrice);
+    const pnlPercent = (pnlRaw / pctBase) * 100;
+    const outcome =
+      pnlPercent > 0.1 ? "WIN" : pnlPercent < -0.1 ? "LOSS" : "BREAKEVEN";
+    return {
+      pnl,
+      slippage: 0,
+      outcome,
+      pnl_percent: parseFloat(pnlPercent.toFixed(3)),
+    };
   }
 }
 

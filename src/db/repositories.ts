@@ -1,4 +1,4 @@
-import type { Collection, Document } from "mongodb";
+import { ObjectId, type Collection, type Document } from "mongodb";
 import { collections, getDb } from "./mongo.js";
 import { DateTime } from "luxon";
 import { IST } from "../time/ist.js";
@@ -73,9 +73,26 @@ export async function fetchOhlcRange(
     .toArray();
 }
 
-export async function insertTrade(doc: TradeLogDoc): Promise<void> {
+export async function insertTrade(doc: TradeLogDoc): Promise<ObjectId> {
   const c = await col<TradeLogDoc>(collections.trades);
-  await c.insertOne(doc);
+  const r = await c.insertOne(doc);
+  return r.insertedId;
+}
+
+export async function updateTradeExit(
+  tradeId: ObjectId,
+  patch: Pick<TradeLogDoc, "exit_time" | "result">
+): Promise<void> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  await c.updateOne(
+    { _id: tradeId },
+    {
+      $set: {
+        exit_time: patch.exit_time,
+        result: patch.result,
+      },
+    }
+  );
 }
 
 export async function insertBacktestTrade(doc: TradeLogDoc): Promise<void> {
