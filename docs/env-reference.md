@@ -100,6 +100,9 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `EXIT_TRAIL_TRIGGER_PCT` | `0.01` | Trailing stop activates when 1% in profit |
 | `EXIT_TRAIL_DIST_PCT` | `0.0075` | Trailing stop distance: 0.75% below peak |
 | `BACKTEST_POSITION_QTY` | `10` | Position size (shares) for backtest PnL calculation |
+| `BACKTEST_ENABLE_ORB_15M` | `true` | Enable ORB trigger evaluation |
+| `BACKTEST_ENABLE_MEAN_REV_Z` | `true` | Enable mean-reversion trigger evaluation |
+| `BACKTEST_ENABLE_BIG_BOY_SWEEP` | `true` | Enable liquidity sweep trigger evaluation |
 
 **Tuning guide:**
 - If you keep getting stopped out before reaching target → widen stop (`EXIT_STOP_PCT=0.02`)

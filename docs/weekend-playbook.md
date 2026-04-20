@@ -115,6 +115,21 @@ Bias control in replay:
 bun run backtest-analyze -- --last
 ```
 
+**Compare strategy profiles on the same window (recommended):**
+```bash
+bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-17
+```
+This runs and analyzes multiple profiles back-to-back:
+- `baseline` (all enabled)
+- `no-meanrev`
+- `no-orb`
+- `bigboy-only`
+
+Useful flags:
+- `--skip-judge` for technical-only comparison
+- `--sync` to allow OHLC sync in the pipeline
+- `--profiles baseline,no-meanrev` to test only specific profiles
+
 Example output:
 ```
 ── OVERALL ─────────────────────────────────

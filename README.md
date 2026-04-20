@@ -167,6 +167,7 @@ curl http://127.0.0.1:3000/health
 | `bun run weekend-optimize` | Mine price patterns from all Mongo tickers → Pinecone |
 | `bun run backtest` | Full replay with PnL simulation → trades_backtest |
 | `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze |
+| `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (baseline / no-meanrev / no-orb / bigboy-only) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
@@ -196,6 +197,9 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry ru
 # one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
 # options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all
+# run profile comparison on same date range
+bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first
+# options: --skip-judge --sync --force-sync-all --step 15 --profiles baseline,no-meanrev,no-orb,bigboy-only
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.
@@ -223,6 +227,11 @@ EXIT_STOP_PCT=0.015          # 1.5% stop loss
 EXIT_TARGET_PCT=0.025        # 2.5% profit target
 EXIT_TRAIL_TRIGGER_PCT=0.01  # start trailing after 1% profit
 EXIT_TRAIL_DIST_PCT=0.0075   # trail 0.75% below peak
+
+# Strategy toggles
+BACKTEST_ENABLE_ORB_15M=true
+BACKTEST_ENABLE_MEAN_REV_Z=true
+BACKTEST_ENABLE_BIG_BOY_SWEEP=true
 
 # Judge cost control
 JUDGE_COOLDOWN_MS=900000     # 15 min between judge calls per ticker

@@ -153,10 +153,14 @@ export class ExecutionEngine {
     if (sessionCandles.length < 30) return;
 
     const triggers: TriggerHit[] = [];
-    const orb = evaluateOrb(sessionCandles);
-    if (orb) triggers.push(orb);
-    const mr = evaluateMeanReversion(sessionCandles);
-    if (mr) triggers.push(mr);
+    if (env.backtestEnableOrb15m) {
+      const orb = evaluateOrb(sessionCandles);
+      if (orb) triggers.push(orb);
+    }
+    if (env.backtestEnableMeanRevZ) {
+      const mr = evaluateMeanReversion(sessionCandles);
+      if (mr) triggers.push(mr);
+    }
 
     const sim = backtest?.simulatedAt
       ? DateTime.fromJSDate(backtest.simulatedAt, { zone: IST })
@@ -166,7 +170,7 @@ export class ExecutionEngine {
     const priorTo = priorDayStart.endOf("day").toJSDate();
     const priorDay = await fetchOhlcRange(ticker, priorFrom, priorTo);
     const pd = priorDayHighLow(priorDay);
-    if (pd && last5m) {
+    if (env.backtestEnableBigBoySweep && pd && last5m) {
       const bb = evaluateBigBoy(last5m, pd);
       if (bb) triggers.push(bb);
     }

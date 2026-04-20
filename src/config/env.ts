@@ -143,6 +143,12 @@ export const env = {
   exitTrailDistPct: num("EXIT_TRAIL_DIST_PCT", 0.0075),
   /** Position size in shares for backtest PnL calculation */
   backtestPositionQty: num("BACKTEST_POSITION_QTY", 10),
+  /** Strategy toggles (used by live + backtest trigger evaluation) */
+  backtestEnableOrb15m: process.env.BACKTEST_ENABLE_ORB_15M !== "false",
+  backtestEnableMeanRevZ:
+    process.env.BACKTEST_ENABLE_MEAN_REV_Z !== "false",
+  backtestEnableBigBoySweep:
+    process.env.BACKTEST_ENABLE_BIG_BOY_SWEEP !== "false",
 
   // ── Backtest microstructure realism ───────────────────────────────────────
   /** Master toggle for slippage/spread/fees/latency realism model in replay */

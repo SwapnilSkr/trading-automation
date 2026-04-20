@@ -16,6 +16,7 @@
     "weekend-optimize": "bun run src/cli/weekend-optimize.ts",
     "backtest": "bun run src/cli/backtest.ts --",
     "backtest-snapshots": "bun run src/cli/backtest-snapshots.ts --",
+    "backtest-ablation": "bun run src/cli/backtest-ablation.ts --",
     "backtest-analyze": "bun run src/cli/backtest-analyze.ts --"
   },
   "dependencies": {

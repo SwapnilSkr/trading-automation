@@ -15,6 +15,83 @@ export interface JudgeResult {
   approve: boolean;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
+
+function extractJsonObject(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fenced = fence?.[1]?.trim();
+  if (fenced && fenced.startsWith("{") && fenced.endsWith("}")) return fenced;
+
+  const start = trimmed.indexOf("{");
+  if (start < 0) return undefined;
+
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i]!;
+    if (inStr) {
+      if (esc) {
+        esc = false;
+      } else if (ch === "\\") {
+        esc = true;
+      } else if (ch === "\"") {
+        inStr = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return trimmed.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+function parseJudgeText(text: string): JudgeResult {
+  const jsonText = extractJsonObject(text);
+  if (!jsonText) {
+    return {
+      approve: false,
+      confidence: 0,
+      reasoning: text.slice(0, 500),
+    };
+  }
+
+  try {
+    const raw = JSON.parse(jsonText) as Record<string, unknown>;
+    return {
+      approve: Boolean(raw.approve),
+      confidence: clamp01(Number(raw.confidence ?? 0)),
+      reasoning: String(raw.reasoning ?? ""),
+    };
+  } catch {
+    return {
+      approve: false,
+      confidence: 0,
+      reasoning: text.slice(0, 500),
+    };
+  }
+}
+
 export async function callJudgeModel(
   input: JudgeInput,
   options?: { model?: string }
@@ -45,48 +122,59 @@ Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasonin
     };
   }
 
-  const res = await fetch(`${env.openRouterBaseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.2,
-      max_tokens: 400,
-    }),
-  });
+  const maxAttempts = 3;
+  let lastError = "unknown";
 
-  if (!res.ok) {
-    const t = await res.text();
-    return {
-      approve: false,
-      confidence: 0,
-      reasoning: `Judge HTTP ${res.status}: ${t}`,
-    };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${env.openRouterBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          temperature: 0.2,
+          max_tokens: 400,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        lastError = `Judge HTTP ${res.status}: ${t}`.slice(0, 500);
+        const retryable = res.status === 429 || res.status >= 500;
+        if (retryable && attempt < maxAttempts) {
+          await sleep(attempt * 500);
+          continue;
+        }
+        return { approve: false, confidence: 0, reasoning: lastError };
+      }
+
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = data.choices?.[0]?.message?.content ?? "{}";
+      return parseJudgeText(text);
+    } catch (err) {
+      lastError =
+        err instanceof Error ? err.message : `Judge fetch error: ${String(err)}`;
+      if (attempt < maxAttempts) {
+        await sleep(attempt * 500);
+        continue;
+      }
+      return {
+        approve: false,
+        confidence: 0,
+        reasoning: lastError.slice(0, 500),
+      };
+    }
   }
 
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const text = data.choices?.[0]?.message?.content ?? "{}";
-  try {
-    const raw = JSON.parse(text) as Record<string, unknown>;
-    return {
-      approve: Boolean(raw.approve),
-      confidence: Number(raw.confidence ?? 0),
-      reasoning: String(raw.reasoning ?? ""),
-    };
-  } catch {
-    return {
-      approve: false,
-      confidence: 0,
-      reasoning: text.slice(0, 500),
-    };
-  }
+  return { approve: false, confidence: 0, reasoning: lastError.slice(0, 500) };
 }
