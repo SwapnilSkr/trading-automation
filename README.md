@@ -200,7 +200,7 @@ bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
 # run profile comparison on same date range
 bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first
 # options: --skip-judge --sync --force-sync-all --step 15
-# --profiles baseline,orb-only,meanrev-only,bigboy-only,vwap-only,no-meanrev,no-orb,no-bigboy,no-vwap,regime-switch
+# --profiles baseline,all-strategies,regime-switch,orb15-only,orb-retest-only,meanrev-only,bigboy-only,vwap-reclaim-reject-only,vwap-pullback-only,prevday-break-retest-only,ema20-break-retest-only,vwap-reclaim-cont-only,ib-break-retest-only,vol-contraction-only,insidebar-retest-only,opendrive-pullback-only,orb-fakeout-only
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.
@@ -231,9 +231,19 @@ EXIT_TRAIL_DIST_PCT=0.0075   # trail 0.75% below peak
 
 # Strategy toggles
 BACKTEST_ENABLE_ORB_15M=true
+BACKTEST_ENABLE_ORB_RETEST_15M=false
 BACKTEST_ENABLE_MEAN_REV_Z=true
 BACKTEST_ENABLE_BIG_BOY_SWEEP=true
 BACKTEST_ENABLE_VWAP_RECLAIM_REJECT=true
+BACKTEST_ENABLE_VWAP_PULLBACK_TREND=false
+BACKTEST_ENABLE_PREV_DAY_HIGH_LOW_BREAK_RETEST=false
+BACKTEST_ENABLE_EMA20_BREAK_RETEST=false
+BACKTEST_ENABLE_VWAP_RECLAIM_CONTINUATION=false
+BACKTEST_ENABLE_INITIAL_BALANCE_BREAK_RETEST=false
+BACKTEST_ENABLE_VOLATILITY_CONTRACTION_BREAKOUT=false
+BACKTEST_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST=false
+BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK=false
+BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL=false
 
 # Volatility regime switch (optional)
 VOL_REGIME_SWITCH_ENABLED=false
@@ -261,7 +271,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 
 - **Broker** — `src/broker/angelOneBroker.ts`: SmartAPI REST (auth, 1m/daily candles, quotes, orders, positions). Falls back to stub if credentials incomplete.
 - **Indicators** — `src/indicators/`: VWAP, RSI(14), Z-score vs VWAP, volume Z-score, RSI divergence, opening range, prior-day high/low.
-- **Strategies** — `src/strategies/triggers.ts`: ORB_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT.
+- **Strategies** — `src/strategies/triggers.ts`: ORB_15M, ORB_RETEST_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT, VWAP_PULLBACK_TREND, PREV_DAY_HIGH_LOW_BREAK_RETEST, EMA20_BREAK_RETEST, VWAP_RECLAIM_CONTINUATION, INITIAL_BALANCE_BREAK_RETEST, VOLATILITY_CONTRACTION_BREAKOUT, INSIDE_BAR_BREAKOUT_WITH_RETEST, OPEN_DRIVE_PULLBACK, ORB_FAKEOUT_REVERSAL.
 - **Execution** — `src/execution/ExecutionEngine.ts`: signal → Pinecone gate → judge → paper order → live exit tracking.
 - **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/target/trailing for backtest.
 - **Discovery** — `src/services/discoveryRun.ts` + `src/discovery/performerScore.ts`: Nifty 100 momentum score, writes `active_watchlist` + `watchlist_snapshots`.

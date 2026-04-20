@@ -18,9 +18,19 @@ import {
   insertTrade,
 } from "../db/repositories.js";
 import {
+  evaluateEma20BreakRetest,
   evaluateBigBoy,
+  evaluateInitialBalanceBreakRetest,
+  evaluateInsideBarBreakoutRetest,
   evaluateMeanReversion,
+  evaluateOpenDrivePullback,
   evaluateOrb,
+  evaluateOrbFakeoutReversal,
+  evaluateOrbRetest15m,
+  evaluatePrevDayBreakRetest,
+  evaluateVolatilityContractionBreakout,
+  evaluateVwapPullbackTrend,
+  evaluateVwapReclaimContinuation,
   evaluateVwapReclaimReject,
   type TriggerHit,
 } from "../strategies/triggers.js";
@@ -158,6 +168,10 @@ export class ExecutionEngine {
       const orb = evaluateOrb(sessionCandles);
       if (orb) triggers.push(orb);
     }
+    if (env.backtestEnableOrbRetest15m) {
+      const orbRetest = evaluateOrbRetest15m(sessionCandles);
+      if (orbRetest) triggers.push(orbRetest);
+    }
     if (env.backtestEnableMeanRevZ) {
       const mr = evaluateMeanReversion(sessionCandles);
       if (mr) triggers.push(mr);
@@ -165,6 +179,38 @@ export class ExecutionEngine {
     if (env.backtestEnableVwapReclaimReject) {
       const vw = evaluateVwapReclaimReject(sessionCandles);
       if (vw) triggers.push(vw);
+    }
+    if (env.backtestEnableVwapPullbackTrend) {
+      const vwPull = evaluateVwapPullbackTrend(sessionCandles);
+      if (vwPull) triggers.push(vwPull);
+    }
+    if (env.backtestEnableEma20BreakRetest) {
+      const emaRetest = evaluateEma20BreakRetest(sessionCandles);
+      if (emaRetest) triggers.push(emaRetest);
+    }
+    if (env.backtestEnableVwapReclaimContinuation) {
+      const vwapCont = evaluateVwapReclaimContinuation(sessionCandles);
+      if (vwapCont) triggers.push(vwapCont);
+    }
+    if (env.backtestEnableInitialBalanceBreakRetest) {
+      const ib = evaluateInitialBalanceBreakRetest(sessionCandles);
+      if (ib) triggers.push(ib);
+    }
+    if (env.backtestEnableVolContractionBreakout) {
+      const vc = evaluateVolatilityContractionBreakout(sessionCandles);
+      if (vc) triggers.push(vc);
+    }
+    if (env.backtestEnableInsideBarBreakoutRetest) {
+      const ibb = evaluateInsideBarBreakoutRetest(sessionCandles);
+      if (ibb) triggers.push(ibb);
+    }
+    if (env.backtestEnableOpenDrivePullback) {
+      const odp = evaluateOpenDrivePullback(sessionCandles);
+      if (odp) triggers.push(odp);
+    }
+    if (env.backtestEnableOrbFakeoutReversal) {
+      const ofr = evaluateOrbFakeoutReversal(sessionCandles);
+      if (ofr) triggers.push(ofr);
     }
 
     const sim = backtest?.simulatedAt
@@ -178,6 +224,10 @@ export class ExecutionEngine {
     if (env.backtestEnableBigBoySweep && pd && last5m) {
       const bb = evaluateBigBoy(last5m, pd);
       if (bb) triggers.push(bb);
+    }
+    if (env.backtestEnablePrevDayBreakRetest && pd) {
+      const pdRetest = evaluatePrevDayBreakRetest(sessionCandles, pd);
+      if (pdRetest) triggers.push(pdRetest);
     }
 
     const gatedTriggers = applyVolRegimeGating(triggers, sessionCandles);
@@ -310,8 +360,9 @@ export class ExecutionEngine {
       ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
     };
 
-    const side =
-      hit.strategy === "MEAN_REV_Z"
+    const side: "BUY" | "SELL" =
+      hit.side ??
+      (hit.strategy === "MEAN_REV_Z"
         ? (snap.z_score_vwap ?? 0) > 0
           ? "SELL"
           : "BUY"
@@ -319,7 +370,7 @@ export class ExecutionEngine {
           ? (snap.vwap_signal ?? 1) < 0
             ? "SELL"
             : "BUY"
-        : "BUY";
+        : "BUY");
 
     const entryPrice =
       ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
@@ -388,14 +439,22 @@ function classifyVolRegime(sessionCandles: Ohlc1m[]): VolRegime | undefined {
 }
 
 function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
-  if (strategy === "ORB_15M") {
+  if (
+    strategy === "ORB_15M" ||
+    strategy === "ORB_RETEST_15M" ||
+    strategy === "INITIAL_BALANCE_BREAK_RETEST" ||
+    strategy === "VOLATILITY_CONTRACTION_BREAKOUT" ||
+    strategy === "INSIDE_BAR_BREAKOUT_WITH_RETEST" ||
+    strategy === "EMA20_BREAK_RETEST" ||
+    strategy === "PREV_DAY_HIGH_LOW_BREAK_RETEST"
+  ) {
     return regime === "LOW"
       ? env.volRegimeOrbLow
       : regime === "MID"
         ? env.volRegimeOrbMid
         : env.volRegimeOrbHigh;
   }
-  if (strategy === "MEAN_REV_Z") {
+  if (strategy === "MEAN_REV_Z" || strategy === "ORB_FAKEOUT_REVERSAL") {
     return regime === "LOW"
       ? env.volRegimeMeanRevLow
       : regime === "MID"

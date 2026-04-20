@@ -153,12 +153,32 @@ export const env = {
   backtestPositionQty: num("BACKTEST_POSITION_QTY", 10),
   /** Strategy toggles (used by live + backtest trigger evaluation) */
   backtestEnableOrb15m: process.env.BACKTEST_ENABLE_ORB_15M !== "false",
+  backtestEnableOrbRetest15m:
+    process.env.BACKTEST_ENABLE_ORB_RETEST_15M === "true",
   backtestEnableMeanRevZ:
     process.env.BACKTEST_ENABLE_MEAN_REV_Z !== "false",
   backtestEnableBigBoySweep:
     process.env.BACKTEST_ENABLE_BIG_BOY_SWEEP !== "false",
   backtestEnableVwapReclaimReject:
     process.env.BACKTEST_ENABLE_VWAP_RECLAIM_REJECT !== "false",
+  backtestEnableVwapPullbackTrend:
+    process.env.BACKTEST_ENABLE_VWAP_PULLBACK_TREND === "true",
+  backtestEnablePrevDayBreakRetest:
+    process.env.BACKTEST_ENABLE_PREV_DAY_HIGH_LOW_BREAK_RETEST === "true",
+  backtestEnableEma20BreakRetest:
+    process.env.BACKTEST_ENABLE_EMA20_BREAK_RETEST === "true",
+  backtestEnableVwapReclaimContinuation:
+    process.env.BACKTEST_ENABLE_VWAP_RECLAIM_CONTINUATION === "true",
+  backtestEnableInitialBalanceBreakRetest:
+    process.env.BACKTEST_ENABLE_INITIAL_BALANCE_BREAK_RETEST === "true",
+  backtestEnableVolContractionBreakout:
+    process.env.BACKTEST_ENABLE_VOLATILITY_CONTRACTION_BREAKOUT === "true",
+  backtestEnableInsideBarBreakoutRetest:
+    process.env.BACKTEST_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST === "true",
+  backtestEnableOpenDrivePullback:
+    process.env.BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK === "true",
+  backtestEnableOrbFakeoutReversal:
+    process.env.BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL === "true",
 
   // ── Volatility regime switch (strategy gating) ────────────────────────────
   /** If true, gate strategies by intraday realized-volatility regime (low/mid/high) */

@@ -102,9 +102,19 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `EXIT_TRAIL_DIST_PCT` | `0.0075` | Trailing stop distance: 0.75% below peak |
 | `BACKTEST_POSITION_QTY` | `10` | Position size (shares) for backtest PnL calculation |
 | `BACKTEST_ENABLE_ORB_15M` | `true` | Enable ORB trigger evaluation |
+| `BACKTEST_ENABLE_ORB_RETEST_15M` | `false` | Enable ORB retest confirmation strategy |
 | `BACKTEST_ENABLE_MEAN_REV_Z` | `true` | Enable mean-reversion trigger evaluation |
 | `BACKTEST_ENABLE_BIG_BOY_SWEEP` | `true` | Enable liquidity sweep trigger evaluation |
 | `BACKTEST_ENABLE_VWAP_RECLAIM_REJECT` | `true` | Enable VWAP reclaim/rejection trigger evaluation |
+| `BACKTEST_ENABLE_VWAP_PULLBACK_TREND` | `false` | Enable VWAP pullback trend continuation strategy |
+| `BACKTEST_ENABLE_PREV_DAY_HIGH_LOW_BREAK_RETEST` | `false` | Enable PDH/PDL break-and-retest strategy |
+| `BACKTEST_ENABLE_EMA20_BREAK_RETEST` | `false` | Enable EMA20 break-retest strategy |
+| `BACKTEST_ENABLE_VWAP_RECLAIM_CONTINUATION` | `false` | Enable VWAP reclaim continuation strategy |
+| `BACKTEST_ENABLE_INITIAL_BALANCE_BREAK_RETEST` | `false` | Enable initial-balance break-retest strategy |
+| `BACKTEST_ENABLE_VOLATILITY_CONTRACTION_BREAKOUT` | `false` | Enable volatility-contraction breakout strategy |
+| `BACKTEST_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST` | `false` | Enable inside-bar breakout-retest strategy |
+| `BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK` | `false` | Enable open-drive pullback continuation strategy |
+| `BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL` | `false` | Enable ORB fakeout reversal strategy |
 
 ### Volatility Regime Switch (strategy gating)
 

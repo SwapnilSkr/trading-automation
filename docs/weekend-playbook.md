@@ -129,7 +129,7 @@ Useful flags:
 - `--skip-judge` for technical-only comparison
 - `--sync` to allow OHLC sync in the pipeline
 - `--profiles baseline,no-meanrev` to test only specific profiles
-- Full profile set: `baseline,orb-only,meanrev-only,bigboy-only,vwap-only,no-meanrev,no-orb,no-bigboy,no-vwap,regime-switch`
+- Full profile set includes single-strategy runs for all implemented algorithms (ORB, ORB retest, mean-reversion, big-boy sweep, VWAP reclaim/reject, VWAP pullback, PDH/PDL break-retest, EMA20 retest, VWAP continuation, initial-balance retest, volatility contraction breakout, inside-bar retest, open-drive pullback, ORB fakeout reversal) plus `baseline`, `all-strategies`, and `regime-switch`.
 
 Example output:
 ```
