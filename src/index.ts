@@ -84,9 +84,20 @@ console.log(
 );
 
 async function runTick(): Promise<void> {
-  await orchestrator.tick();
-  markOrchestratorTick();
+  if (tickInFlight) {
+    console.warn("[tick] previous tick still running — skipping this cycle");
+    return;
+  }
+  tickInFlight = true;
+  try {
+    await orchestrator.tick();
+    markOrchestratorTick();
+  } finally {
+    tickInFlight = false;
+  }
 }
+
+let tickInFlight = false;
 
 setInterval(() => {
   runTick().catch((err) => console.error("[tick]", err));

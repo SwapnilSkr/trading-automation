@@ -43,6 +43,12 @@ export interface TechnicalSnapshot {
 export interface TradeLogDoc extends Document {
   ticker: string;
   entry_time: Date;
+  /** Executed trade direction (set on live/backtest entries that were actually placed) */
+  side?: "BUY" | "SELL";
+  /** Fill price used as entry basis for exit PnL */
+  entry_price?: number;
+  /** True when an order was executed; false for logged non-entry decisions */
+  order_executed?: boolean;
   exit_time?: Date;
   strategy: StrategyId;
   env: "PAPER" | "LIVE";

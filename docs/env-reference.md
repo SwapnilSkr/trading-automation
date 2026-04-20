@@ -48,6 +48,11 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
 | `JUDGE_COOLDOWN_MS` | `900000` (15 min) | Min time between judge calls per ticker in live mode |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
+| `LIVE_DEBUG_SCANS` | `false` | If `true`, print per-ticker scan/decision logs in EXECUTION mode |
+| `LIVE_EXEC_SYNC_ENABLED` | `true` | During EXECUTION, auto-sync recent 1m bars from broker into Mongo |
+| `LIVE_EXEC_SYNC_INTERVAL_MINUTES` | `10` | Interval between execution-time auto-sync passes |
+| `LIVE_EXEC_SYNC_LOOKBACK_MINUTES` | `180` | Lookback window used per execution-time auto-sync pass |
+| `LIVE_EXEC_TICKER_RESYNC_COOLDOWN_MINUTES` | `10` | Per-ticker cooldown for rescue sync when bars are insufficient |
 | `PINECONE_GATE_ENABLED` | `true` | Auto-approve from Pinecone without LLM if top match ≥ threshold |
 | `PINECONE_GATE_MIN_SCORE` | `0.98` | Cosine similarity threshold for auto-approval |
 
@@ -89,6 +94,8 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `MAX_CONCURRENT_TRADES` | `3` | Max open positions at once |
 | `WATCHED_TICKERS` | `RELIANCE,TCS,INFY` | Default tickers (used when TRADING_TICKER_SOURCE=env) |
 | `TRADING_TICKER_SOURCE` | `env` | `env` = use WATCHED_TICKERS, `active_watchlist` = use Mongo discovery list |
+
+Execution note: with `LIVE_EXEC_SYNC_ENABLED=true`, the daemon no longer depends on post-market `SYNC` alone for intraday bars; it performs periodic top-up sync during EXECUTION and on-demand ticker rescue sync when bar count is insufficient.
 
 ---
 

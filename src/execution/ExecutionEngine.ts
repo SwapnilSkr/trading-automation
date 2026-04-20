@@ -14,6 +14,8 @@ import {
 } from "../pinecone/patternStore.js";
 import {
   fetchOhlcRange,
+  fetchLatestOpenExecutedTradeByTicker,
+  fetchOpenExecutedTrades,
   insertBacktestTrade,
   insertTrade,
   updateTradeExit,
@@ -95,6 +97,34 @@ export class ExecutionEngine {
     this.openCount = n;
   }
 
+  async restoreOpenPositionsFromMongo(): Promise<void> {
+    const openTrades = await fetchOpenExecutedTrades(env.executionEnv);
+    if (openTrades.length === 0) return;
+
+    let restored = 0;
+    for (const t of openTrades) {
+      if (!t.side || typeof t.entry_price !== "number") continue;
+      const existing = this.livePositions.get(t.ticker);
+      if (existing && existing.entryTime >= t.entry_time) continue;
+      this.livePositions.set(t.ticker, {
+        ticker: t.ticker,
+        side: t.side,
+        entryPrice: t.entry_price,
+        entryTime: t.entry_time,
+        peakPrice: t.entry_price,
+        strategy: t.strategy,
+        tradeId: t._id,
+      });
+      restored++;
+    }
+    if (restored > 0) {
+      console.log(
+        `[Execution] restored ${restored} open position(s) from Mongo`
+      );
+      this.openCount = Math.max(this.openCount, this.livePositions.size);
+    }
+  }
+
   /**
    * Call on each EXECUTION tick BEFORE runScanningPass.
    * Checks open paper positions against stop/target using latest candle.
@@ -174,6 +204,34 @@ export class ExecutionEngine {
     }
   }
 
+  async forceSquareOffPersistedPositionForTicker(
+    ticker: string,
+    exitPrice: number,
+    exitTime: Date
+  ): Promise<void> {
+    if (this.livePositions.has(ticker)) return;
+    const t = await fetchLatestOpenExecutedTradeByTicker(ticker, env.executionEnv);
+    if (!t || !t.side || typeof t.entry_price !== "number") return;
+    const pos: LivePosition = {
+      ticker,
+      side: t.side,
+      entryPrice: t.entry_price,
+      entryTime: t.entry_time,
+      peakPrice: t.entry_price,
+      strategy: t.strategy,
+      tradeId: t._id,
+    };
+    const result = this.liveResultFromExit(pos, exitPrice);
+    this.recordPnl(result.pnl);
+    await updateTradeExit(t._id, {
+      exit_time: exitTime,
+      result,
+    });
+    console.log(
+      `[Exit] ${ticker} reconciled persisted trade @ ${exitPrice.toFixed(2)}`
+    );
+  }
+
   async runScanningPass(
     args: {
       ticker: string;
@@ -188,7 +246,14 @@ export class ExecutionEngine {
 
     const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines } =
       args;
-    if (sessionCandles.length < 30) return;
+    if (sessionCandles.length < 30) {
+      if (!backtest && env.liveDebugScans) {
+        console.log(
+          `[Scan] ${ticker} skipped: insufficient bars (${sessionCandles.length}/30)`
+        );
+      }
+      return;
+    }
 
     const triggers: TriggerHit[] = [];
     if (env.backtestEnableOrb15m) {
@@ -259,6 +324,18 @@ export class ExecutionEngine {
 
     const gatedTriggers = applyVolRegimeGating(triggers, sessionCandles);
 
+    if (!backtest && env.liveDebugScans) {
+      if (triggers.length === 0) {
+        console.log(
+          `[Scan] ${ticker} no triggers (bars=${sessionCandles.length})`
+        );
+      } else {
+        console.log(
+          `[Scan] ${ticker} triggers=${triggers.length} gated=${gatedTriggers.length} [${gatedTriggers.map((t) => `${t.strategy}:${t.side}`).join(", ")}]`
+        );
+      }
+    }
+
     for (const hit of gatedTriggers) {
       await this.maybeExecute(ticker, hit, {
         niftyTrendHint,
@@ -285,6 +362,11 @@ export class ExecutionEngine {
       !backtest &&
       nowMs - (this.lastJudgeByTicker.get(ticker) ?? 0) < env.judgeCooldownMs
     ) {
+      if (env.liveDebugScans) {
+        console.log(
+          `[Decision] ${ticker} ${hit.strategy} rejected: cooldown active`
+        );
+      }
       return;
     }
 
@@ -373,6 +455,17 @@ export class ExecutionEngine {
       this.lastJudgeByTicker.set(ticker, nowMs);
     }
 
+    if (!backtest && env.liveDebugScans) {
+      const via = skipJudgeMode
+        ? "skip-judge"
+        : pineconeGate
+          ? "pinecone-gate"
+          : "llm-judge";
+      console.log(
+        `[Decision] ${ticker} ${hit.strategy} ${hit.side} approve=${judge.approve} via=${via} conf=${judge.confidence.toFixed(2)} reason="${shortReason(judge.reasoning)}"`
+      );
+    }
+
     const snap = normalizeSnapshot(hit.snapshot);
     const entryTime = backtest?.simulatedAt ?? new Date();
 
@@ -381,6 +474,7 @@ export class ExecutionEngine {
       entry_time: entryTime,
       strategy: hit.strategy as StrategyId,
       env: backtest ? "PAPER" : env.executionEnv,
+      order_executed: false,
       technical_snapshot: snap,
       ai_confidence: judge.confidence,
       ai_reasoning: judge.reasoning,
@@ -409,12 +503,20 @@ export class ExecutionEngine {
 
     let liveEntryPersisted = false;
     if (doOrder) {
+      doc.order_executed = true;
+      doc.side = side;
+      doc.entry_price = entryPrice;
       await this.broker.placePaperOrder({
         ticker,
         side,
         qty: 1,
         strategy: hit.strategy,
       });
+      if (!backtest && env.liveDebugScans) {
+        console.log(
+          `[Entry] ${ticker} ${hit.strategy} ${side} @ ${entryPrice.toFixed(2)}`
+        );
+      }
       this.openCount += 1;
       // Track position for live stop/target management
       if (!backtest) {
@@ -440,6 +542,11 @@ export class ExecutionEngine {
     } else if (!backtest) {
       if (!liveEntryPersisted) {
         await insertTrade(doc);
+        if (env.liveDebugScans) {
+          console.log(
+            `[Decision] ${ticker} ${hit.strategy} persisted as non-entry (approve=${judge.approve})`
+          );
+        }
       }
     }
   }
@@ -462,6 +569,11 @@ export class ExecutionEngine {
       pnl_percent: parseFloat(pnlPercent.toFixed(3)),
     };
   }
+}
+
+function shortReason(reason: string): string {
+  const r = reason.replace(/\s+/g, " ").trim();
+  return r.length <= 140 ? r : `${r.slice(0, 137)}...`;
 }
 
 type VolRegime = "LOW" | "MID" | "HIGH";

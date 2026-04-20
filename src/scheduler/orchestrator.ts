@@ -6,7 +6,7 @@ import {
 } from "../db/repositories.js";
 import { ExecutionEngine } from "../execution/ExecutionEngine.js";
 import { fetchTodayNewsContext } from "../services/news.js";
-import { syncIntradayHistory } from "../services/marketSync.js";
+import { syncIntradayHistory, syncOhlcForRange } from "../services/marketSync.js";
 import { runDiscoverySync } from "../services/discoveryRun.js";
 import { runPreopenPivot } from "../services/preopenPivot.js";
 import { fetchNiftyTrendContext } from "../services/niftyTrend.js";
@@ -25,6 +25,9 @@ export class TradingOrchestrator {
   private nightlyDiscoveryIstDay?: string;
   private nightlyDiscoveryRunning = false;
   private preopenPivotIstDay?: string;
+  private lastExecSyncAtMs = 0;
+  private execSyncRunning = false;
+  private tickerResyncLastAtMs = new Map<string, number>();
 
   constructor(private broker: BrokerClient) {
     this.engine = new ExecutionEngine(broker);
@@ -33,6 +36,7 @@ export class TradingOrchestrator {
   async startup(): Promise<void> {
     await ensureIndexes();
     console.log("[Orchestrator] indexes ensured");
+    await this.engine.restoreOpenPositionsFromMongo();
   }
 
   async tick(): Promise<void> {
@@ -85,8 +89,13 @@ export class TradingOrchestrator {
         const day = nowIST().startOf("day").toJSDate();
         const end = nowIST().toJSDate();
         const watch = await resolveWatchlistTickers();
+        await this.maybeSyncExecutionBars(watch, end);
         for (const ticker of watch) {
-          const candles = await fetchOhlcRange(ticker, day, end);
+          let candles = await fetchOhlcRange(ticker, day, end);
+          if (candles.length < 30) {
+            await this.maybeResyncTickerForExecution(ticker, end);
+            candles = await fetchOhlcRange(ticker, day, end);
+          }
           const last5m = aggregateLastNMinutes(candles, 5);
           // Check exits first (stop-loss / profit-target / trailing stop)
           await this.engine.checkLiveExits(ticker, candles);
@@ -98,8 +107,15 @@ export class TradingOrchestrator {
             newsHeadlines: news,
           });
         }
-        const positions = await this.broker.listOpenPositions();
-        this.engine.setOpenCount(positions.length);
+        try {
+          const positions = await this.broker.listOpenPositions();
+          this.engine.setOpenCount(positions.length);
+        } catch (e) {
+          console.error(
+            "[Orchestrator] listOpenPositions failed (continuing with previous open count)",
+            e
+          );
+        }
         break;
       }
       case "SQUARE_OFF": {
@@ -111,6 +127,11 @@ export class TradingOrchestrator {
           const last = candles[candles.length - 1];
           if (last) {
             await this.engine.forceSquareOffTrackedPosition(
+              ticker,
+              last.c,
+              end
+            );
+            await this.engine.forceSquareOffPersistedPositionForTicker(
               ticker,
               last.c,
               end
@@ -168,6 +189,65 @@ export class TradingOrchestrator {
       }
       default:
         break;
+    }
+  }
+
+  private async maybeSyncExecutionBars(
+    tickers: string[],
+    end: Date
+  ): Promise<void> {
+    if (!env.liveExecSyncEnabled) return;
+    if (tickers.length === 0) return;
+    if (this.execSyncRunning) return;
+
+    const intervalMs = Math.max(1, env.liveExecSyncIntervalMinutes) * 60_000;
+    if (Date.now() - this.lastExecSyncAtMs < intervalMs) return;
+
+    this.execSyncRunning = true;
+    try {
+      const lookbackMins = Math.max(30, env.liveExecSyncLookbackMinutes);
+      const from = nowIST()
+        .minus({ minutes: lookbackMins })
+        .startOf("minute")
+        .toJSDate();
+      const results = await syncOhlcForRange(this.broker, from, end, tickers);
+      const tickersWithBars = results.filter((r) => r.bars > 0).length;
+      const totalBars = results.reduce((s, r) => s + r.bars, 0);
+      console.log(
+        `[Orchestrator] exec auto-sync: ${tickersWithBars}/${results.length} tickers, bars=${totalBars}`
+      );
+    } catch (e) {
+      console.error("[Orchestrator] exec auto-sync failed", e);
+    } finally {
+      this.lastExecSyncAtMs = Date.now();
+      this.execSyncRunning = false;
+    }
+  }
+
+  private async maybeResyncTickerForExecution(
+    ticker: string,
+    end: Date
+  ): Promise<void> {
+    if (!env.liveExecSyncEnabled) return;
+
+    const cooldownMs =
+      Math.max(1, env.liveExecTickerResyncCooldownMinutes) * 60_000;
+    const lastAt = this.tickerResyncLastAtMs.get(ticker) ?? 0;
+    if (Date.now() - lastAt < cooldownMs) return;
+    this.tickerResyncLastAtMs.set(ticker, Date.now());
+
+    const lookbackMins = Math.max(30, env.liveExecSyncLookbackMinutes);
+    const from = nowIST()
+      .minus({ minutes: lookbackMins })
+      .startOf("minute")
+      .toJSDate();
+    try {
+      const [r] = await syncOhlcForRange(this.broker, from, end, [ticker]);
+      console.log(
+        `[Orchestrator] ticker resync ${ticker}: ${r?.bars ?? 0} bars`
+      );
+    } catch (e) {
+      console.error(`[Orchestrator] ticker resync failed ${ticker}`, e);
     }
   }
 }

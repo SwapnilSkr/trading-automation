@@ -41,7 +41,8 @@ function partitionTrades(trades: TradeLogDoc[]): {
 async function main(): Promise<void> {
   await ensureIndexes();
   const date = istDateString(nowIST().minus({ days: 0 }));
-  const trades = await tradesForDay(date);
+  const all = await tradesForDay(date);
+  const trades = all.filter((t) => t.order_executed !== false);
   const { winners, losers } = partitionTrades(trades);
 
   const parts: string[] = [];
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
   const summary =
     parts.length > 0
       ? parts.join("\n\n").slice(0, 4000)
-      : "No trades logged for this session.";
+      : "No executed trades logged for this session.";
 
   await upsertLesson({
     date,

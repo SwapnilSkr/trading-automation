@@ -117,22 +117,27 @@ async function main(): Promise<void> {
     .find({ entry_time: { $gte: start, $lte: end } })
     .sort({ entry_time: 1 })
     .toArray();
+  const executed = trades.filter((t) => t.order_executed !== false);
 
   console.log(`\n[live-analyze] Date: ${dayStr} (IST)`);
-  if (trades.length === 0) {
+  if (executed.length === 0) {
     console.log("  No live/paper trades for this date.");
+    const nonEntries = trades.filter((t) => t.order_executed === false).length;
+    if (nonEntries > 0) {
+      console.log(`  Note: ${nonEntries} non-entry decision logs found.`);
+    }
     return;
   }
 
-  printStats("OVERALL", trades);
+  printStats("OVERALL", executed);
 
-  const unresolved = trades.filter((t) => !t.result).length;
+  const unresolved = executed.filter((t) => !t.result).length;
   if (unresolved > 0) {
     console.log(`\n  ⚠ ${unresolved} entries have no exit/result yet (open or untracked close).`);
   }
 
   const byStrategy = new Map<string, TradeLogDoc[]>();
-  for (const t of trades) {
+  for (const t of executed) {
     const key = t.strategy ?? "UNKNOWN";
     if (!byStrategy.has(key)) byStrategy.set(key, []);
     byStrategy.get(key)!.push(t);
@@ -142,7 +147,7 @@ async function main(): Promise<void> {
   }
 
   const byTicker = new Map<string, TradeLogDoc[]>();
-  for (const t of trades) {
+  for (const t of executed) {
     if (!byTicker.has(t.ticker)) byTicker.set(t.ticker, []);
     byTicker.get(t.ticker)!.push(t);
   }

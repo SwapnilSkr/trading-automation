@@ -100,6 +100,39 @@ export async function insertBacktestTrade(doc: TradeLogDoc): Promise<void> {
   await c.insertOne(doc);
 }
 
+export async function fetchOpenExecutedTrades(
+  envMode?: TradeLogDoc["env"]
+): Promise<Array<TradeLogDoc & { _id: ObjectId }>> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const filter: Record<string, unknown> = {
+    order_executed: { $ne: false },
+    result: { $exists: false },
+  };
+  if (envMode) filter.env = envMode;
+  return c
+    .find(filter)
+    .sort({ entry_time: 1 })
+    .toArray() as Promise<Array<TradeLogDoc & { _id: ObjectId }>>;
+}
+
+export async function fetchLatestOpenExecutedTradeByTicker(
+  ticker: string,
+  envMode?: TradeLogDoc["env"]
+): Promise<(TradeLogDoc & { _id: ObjectId }) | null> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const filter: Record<string, unknown> = {
+    ticker,
+    order_executed: { $ne: false },
+    result: { $exists: false },
+  };
+  if (envMode) filter.env = envMode;
+  return (await c
+    .find(filter)
+    .sort({ entry_time: -1 })
+    .limit(1)
+    .next()) as (TradeLogDoc & { _id: ObjectId }) | null;
+}
+
 export async function fetchNewsArchiveHeadlinesBeforeOrAt(
   sim: Date,
   limitDocs = 40

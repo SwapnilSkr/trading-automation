@@ -121,6 +121,22 @@ export const env = {
   judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 15 * 60 * 1000),
   /** If true, bypass judge in live daemon and auto-approve technical triggers */
   liveSkipJudge: process.env.LIVE_SKIP_JUDGE === "true",
+  /** If true, print per-scan trigger and judge decision logs in live daemon */
+  liveDebugScans: process.env.LIVE_DEBUG_SCANS === "true",
+  /**
+   * During EXECUTION window, periodically backfill recent 1m bars so scanning
+   * does not depend on post-market SYNC only.
+   */
+  liveExecSyncEnabled: process.env.LIVE_EXEC_SYNC_ENABLED !== "false",
+  /** Minutes between execution-time auto-sync passes */
+  liveExecSyncIntervalMinutes: num("LIVE_EXEC_SYNC_INTERVAL_MINUTES", 10),
+  /** How far back each execution-time auto-sync fetches */
+  liveExecSyncLookbackMinutes: num("LIVE_EXEC_SYNC_LOOKBACK_MINUTES", 180),
+  /** Cooldown for ticker-specific rescue sync when bars are insufficient */
+  liveExecTickerResyncCooldownMinutes: num(
+    "LIVE_EXEC_TICKER_RESYNC_COOLDOWN_MINUTES",
+    10
+  ),
 
   /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
   pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
