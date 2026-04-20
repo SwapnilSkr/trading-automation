@@ -3,7 +3,17 @@ import { spawnSync } from "node:child_process";
 import { collections, getDb } from "../db/mongo.js";
 import { runCli } from "./runCli.js";
 
-type ProfileKey = "baseline" | "no-meanrev" | "no-orb" | "bigboy-only";
+type ProfileKey =
+  | "baseline"
+  | "orb-only"
+  | "meanrev-only"
+  | "bigboy-only"
+  | "vwap-only"
+  | "no-meanrev"
+  | "no-orb"
+  | "no-bigboy"
+  | "no-vwap"
+  | "regime-switch";
 
 interface Args {
   from: string;
@@ -30,6 +40,30 @@ const PROFILE_SPECS: Record<ProfileKey, ProfileSpec> = {
       BACKTEST_ENABLE_ORB_15M: "true",
       BACKTEST_ENABLE_MEAN_REV_Z: "true",
       BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "orb-only": {
+    key: "orb-only",
+    label: "ORB_15M only",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "true",
+      BACKTEST_ENABLE_MEAN_REV_Z: "false",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "false",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "false",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "meanrev-only": {
+    key: "meanrev-only",
+    label: "MEAN_REV_Z only",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "false",
+      BACKTEST_ENABLE_MEAN_REV_Z: "true",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "false",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "false",
+      VOL_REGIME_SWITCH_ENABLED: "false",
     },
   },
   "no-meanrev": {
@@ -39,6 +73,8 @@ const PROFILE_SPECS: Record<ProfileKey, ProfileSpec> = {
       BACKTEST_ENABLE_ORB_15M: "true",
       BACKTEST_ENABLE_MEAN_REV_Z: "false",
       BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "false",
     },
   },
   "no-orb": {
@@ -48,6 +84,30 @@ const PROFILE_SPECS: Record<ProfileKey, ProfileSpec> = {
       BACKTEST_ENABLE_ORB_15M: "false",
       BACKTEST_ENABLE_MEAN_REV_Z: "true",
       BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "no-bigboy": {
+    key: "no-bigboy",
+    label: "Disable BIG_BOY_SWEEP",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "true",
+      BACKTEST_ENABLE_MEAN_REV_Z: "true",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "false",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "no-vwap": {
+    key: "no-vwap",
+    label: "Disable VWAP_RECLAIM_REJECT",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "true",
+      BACKTEST_ENABLE_MEAN_REV_Z: "true",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "false",
+      VOL_REGIME_SWITCH_ENABLED: "false",
     },
   },
   "bigboy-only": {
@@ -57,6 +117,30 @@ const PROFILE_SPECS: Record<ProfileKey, ProfileSpec> = {
       BACKTEST_ENABLE_ORB_15M: "false",
       BACKTEST_ENABLE_MEAN_REV_Z: "false",
       BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "false",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "vwap-only": {
+    key: "vwap-only",
+    label: "VWAP_RECLAIM_REJECT only",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "false",
+      BACKTEST_ENABLE_MEAN_REV_Z: "false",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "false",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "false",
+    },
+  },
+  "regime-switch": {
+    key: "regime-switch",
+    label: "All strategies + volatility regime gating",
+    env: {
+      BACKTEST_ENABLE_ORB_15M: "true",
+      BACKTEST_ENABLE_MEAN_REV_Z: "true",
+      BACKTEST_ENABLE_BIG_BOY_SWEEP: "true",
+      BACKTEST_ENABLE_VWAP_RECLAIM_REJECT: "true",
+      VOL_REGIME_SWITCH_ENABLED: "true",
     },
   },
 };
@@ -72,9 +156,13 @@ function parseArgs(): Args {
   let clearFirst = true;
   let profiles: ProfileKey[] = [
     "baseline",
+    "orb-only",
+    "meanrev-only",
     "no-meanrev",
     "no-orb",
     "bigboy-only",
+    "vwap-only",
+    "regime-switch",
   ];
 
   for (let i = 0; i < argv.length; i++) {
@@ -115,9 +203,15 @@ function parseArgs(): Args {
         .map((s) => {
           if (
             s !== "baseline" &&
+            s !== "orb-only" &&
+            s !== "meanrev-only" &&
             s !== "no-meanrev" &&
             s !== "no-orb" &&
-            s !== "bigboy-only"
+            s !== "no-bigboy" &&
+            s !== "no-vwap" &&
+            s !== "bigboy-only" &&
+            s !== "vwap-only" &&
+            s !== "regime-switch"
           ) {
             throw new Error(`Unknown profile: ${s}`);
           }
@@ -137,7 +231,7 @@ Options:
   --sync
   --force-sync-all
   --no-clear-first
-  --profiles baseline,no-meanrev,no-orb,bigboy-only
+  --profiles baseline,orb-only,meanrev-only,bigboy-only,vwap-only,no-meanrev,no-orb,no-bigboy,no-vwap,regime-switch
 `);
   }
 

@@ -13,6 +13,12 @@ function num(name: string, def: number): number {
   return Number.isFinite(n) ? n : def;
 }
 
+function bool(name: string, def: boolean): boolean {
+  const v = process.env[name];
+  if (v === undefined || v === "") return def;
+  return v === "true";
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
@@ -113,6 +119,8 @@ export const env = {
 
   /** Min ms between judge (or Pinecone-gate) decisions per ticker — live only */
   judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 15 * 60 * 1000),
+  /** If true, bypass judge in live daemon and auto-approve technical triggers */
+  liveSkipJudge: process.env.LIVE_SKIP_JUDGE === "true",
 
   /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
   pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
@@ -149,6 +157,30 @@ export const env = {
     process.env.BACKTEST_ENABLE_MEAN_REV_Z !== "false",
   backtestEnableBigBoySweep:
     process.env.BACKTEST_ENABLE_BIG_BOY_SWEEP !== "false",
+  backtestEnableVwapReclaimReject:
+    process.env.BACKTEST_ENABLE_VWAP_RECLAIM_REJECT !== "false",
+
+  // ── Volatility regime switch (strategy gating) ────────────────────────────
+  /** If true, gate strategies by intraday realized-volatility regime (low/mid/high) */
+  volRegimeSwitchEnabled: bool("VOL_REGIME_SWITCH_ENABLED", false),
+  /** Number of bars used to compute realized-volatility regime */
+  volRegimeLookbackBars: num("VOL_REGIME_LOOKBACK_BARS", 30),
+  /** Low regime threshold: realized vol % below this is LOW */
+  volRegimeLowMaxPct: num("VOL_REGIME_LOW_MAX_PCT", 0.08),
+  /** High regime threshold: realized vol % at/above this is HIGH */
+  volRegimeHighMinPct: num("VOL_REGIME_HIGH_MIN_PCT", 0.22),
+  volRegimeOrbLow: bool("VOL_REGIME_ORB_LOW", false),
+  volRegimeOrbMid: bool("VOL_REGIME_ORB_MID", true),
+  volRegimeOrbHigh: bool("VOL_REGIME_ORB_HIGH", true),
+  volRegimeMeanRevLow: bool("VOL_REGIME_MEANREV_LOW", true),
+  volRegimeMeanRevMid: bool("VOL_REGIME_MEANREV_MID", true),
+  volRegimeMeanRevHigh: bool("VOL_REGIME_MEANREV_HIGH", false),
+  volRegimeBigBoyLow: bool("VOL_REGIME_BIGBOY_LOW", false),
+  volRegimeBigBoyMid: bool("VOL_REGIME_BIGBOY_MID", true),
+  volRegimeBigBoyHigh: bool("VOL_REGIME_BIGBOY_HIGH", true),
+  volRegimeVwapLow: bool("VOL_REGIME_VWAP_LOW", false),
+  volRegimeVwapMid: bool("VOL_REGIME_VWAP_MID", true),
+  volRegimeVwapHigh: bool("VOL_REGIME_VWAP_HIGH", true),
 
   // ── Backtest microstructure realism ───────────────────────────────────────
   /** Master toggle for slippage/spread/fees/latency realism model in replay */

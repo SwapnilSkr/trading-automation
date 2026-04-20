@@ -129,6 +129,7 @@ Useful flags:
 - `--skip-judge` for technical-only comparison
 - `--sync` to allow OHLC sync in the pipeline
 - `--profiles baseline,no-meanrev` to test only specific profiles
+- Full profile set: `baseline,orb-only,meanrev-only,bigboy-only,vwap-only,no-meanrev,no-orb,no-bigboy,no-vwap,regime-switch`
 
 Example output:
 ```

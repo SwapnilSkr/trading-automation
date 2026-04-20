@@ -1,6 +1,10 @@
 import type { Document } from "mongodb";
 
-export type StrategyId = "ORB_15M" | "MEAN_REV_Z" | "BIG_BOY_SWEEP";
+export type StrategyId =
+  | "ORB_15M"
+  | "MEAN_REV_Z"
+  | "BIG_BOY_SWEEP"
+  | "VWAP_RECLAIM_REJECT";
 
 export type TradeOutcome = "WIN" | "LOSS" | "BREAKEVEN";
 

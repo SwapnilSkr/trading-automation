@@ -167,7 +167,7 @@ curl http://127.0.0.1:3000/health
 | `bun run weekend-optimize` | Mine price patterns from all Mongo tickers → Pinecone |
 | `bun run backtest` | Full replay with PnL simulation → trades_backtest |
 | `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze |
-| `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (baseline / no-meanrev / no-orb / bigboy-only) |
+| `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
@@ -199,7 +199,8 @@ bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
 # options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all
 # run profile comparison on same date range
 bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first
-# options: --skip-judge --sync --force-sync-all --step 15 --profiles baseline,no-meanrev,no-orb,bigboy-only
+# options: --skip-judge --sync --force-sync-all --step 15
+# --profiles baseline,orb-only,meanrev-only,bigboy-only,vwap-only,no-meanrev,no-orb,no-bigboy,no-vwap,regime-switch
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.
@@ -232,9 +233,16 @@ EXIT_TRAIL_DIST_PCT=0.0075   # trail 0.75% below peak
 BACKTEST_ENABLE_ORB_15M=true
 BACKTEST_ENABLE_MEAN_REV_Z=true
 BACKTEST_ENABLE_BIG_BOY_SWEEP=true
+BACKTEST_ENABLE_VWAP_RECLAIM_REJECT=true
+
+# Volatility regime switch (optional)
+VOL_REGIME_SWITCH_ENABLED=false
+VOL_REGIME_LOW_MAX_PCT=0.08
+VOL_REGIME_HIGH_MIN_PCT=0.22
 
 # Judge cost control
 JUDGE_COOLDOWN_MS=900000     # 15 min between judge calls per ticker
+LIVE_SKIP_JUDGE=false        # true => bypass LLM judge in daemon (technical-only auto-approve)
 PINECONE_GATE_MIN_SCORE=0.98 # auto-approve threshold (raise to 0.99 to be stricter)
 JUDGE_MODEL=deepseek/deepseek-chat  # cheapest capable judge
 ```
@@ -253,7 +261,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 
 - **Broker** — `src/broker/angelOneBroker.ts`: SmartAPI REST (auth, 1m/daily candles, quotes, orders, positions). Falls back to stub if credentials incomplete.
 - **Indicators** — `src/indicators/`: VWAP, RSI(14), Z-score vs VWAP, volume Z-score, RSI divergence, opening range, prior-day high/low.
-- **Strategies** — `src/strategies/triggers.ts`: ORB_15M, MEAN_REV_Z, BIG_BOY_SWEEP.
+- **Strategies** — `src/strategies/triggers.ts`: ORB_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT.
 - **Execution** — `src/execution/ExecutionEngine.ts`: signal → Pinecone gate → judge → paper order → live exit tracking.
 - **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/target/trailing for backtest.
 - **Discovery** — `src/services/discoveryRun.ts` + `src/discovery/performerScore.ts`: Nifty 100 momentum score, writes `active_watchlist` + `watchlist_snapshots`.

@@ -4,6 +4,7 @@ import {
   rsiBullishDivergence,
   rsiBearishDivergence,
   zScoreVsVwap,
+  vwap,
   volumeZScore,
 } from "../indicators/core.js";
 import { detectOrbBreakoutUp } from "../indicators/orb.js";
@@ -71,5 +72,43 @@ export function evaluateBigBoy(
       l: last5mBar.l,
     },
     hint: `Liquidity grab at ${sweep.level}`,
+  };
+}
+
+export function evaluateVwapReclaimReject(
+  sessionCandles: Ohlc1m[]
+): TriggerHit | undefined {
+  if (sessionCandles.length < 25) return undefined;
+
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const prev = sessionCandles[sessionCandles.length - 2]!;
+  const vw = vwap(sessionCandles.slice(-Math.min(30, sessionCandles.length)));
+  const vz = volumeZScore(sessionCandles, 20);
+
+  const touchTol = 0.0015; // 0.15%
+  const touched =
+    (last.l <= vw && last.h >= vw) ||
+    Math.abs(last.l - vw) / vw <= touchTol ||
+    Math.abs(last.h - vw) / vw <= touchTol;
+  const volumeOk = vz === undefined || vz > 0;
+
+  const reclaim = prev.c < vw && last.c > vw && touched && volumeOk;
+  const reject = prev.c > vw && last.c < vw && touched && volumeOk;
+
+  if (!reclaim && !reject) return undefined;
+
+  return {
+    strategy: "VWAP_RECLAIM_REJECT",
+    snapshot: {
+      vwap: vw,
+      prev_close: prev.c,
+      last_close: last.c,
+      vwap_dist: ((last.c - vw) / vw) * 100,
+      vwap_signal: reclaim ? 1 : -1,
+      volume_z: vz,
+    },
+    hint: reclaim
+      ? "VWAP reclaim: close crossed back above VWAP after prior weakness"
+      : "VWAP rejection: close crossed back below VWAP after prior strength",
   };
 }

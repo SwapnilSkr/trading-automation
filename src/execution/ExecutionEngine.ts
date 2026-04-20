@@ -21,6 +21,7 @@ import {
   evaluateBigBoy,
   evaluateMeanReversion,
   evaluateOrb,
+  evaluateVwapReclaimReject,
   type TriggerHit,
 } from "../strategies/triggers.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
@@ -161,6 +162,10 @@ export class ExecutionEngine {
       const mr = evaluateMeanReversion(sessionCandles);
       if (mr) triggers.push(mr);
     }
+    if (env.backtestEnableVwapReclaimReject) {
+      const vw = evaluateVwapReclaimReject(sessionCandles);
+      if (vw) triggers.push(vw);
+    }
 
     const sim = backtest?.simulatedAt
       ? DateTime.fromJSDate(backtest.simulatedAt, { zone: IST })
@@ -175,7 +180,9 @@ export class ExecutionEngine {
       if (bb) triggers.push(bb);
     }
 
-    for (const hit of triggers) {
+    const gatedTriggers = applyVolRegimeGating(triggers, sessionCandles);
+
+    for (const hit of gatedTriggers) {
       await this.maybeExecute(ticker, hit, {
         niftyTrendHint,
         newsHeadlines,
@@ -261,12 +268,17 @@ export class ExecutionEngine {
       top.score >= env.pineconeGateMinScore &&
       top.meta.outcome === "WIN";
 
+    const skipJudgeMode =
+      backtest?.skipJudge === true || (!backtest && env.liveSkipJudge);
+
     let judge: JudgeResult;
-    if (backtest?.skipJudge) {
+    if (skipJudgeMode) {
       judge = {
         approve: true,
         confidence: 0.5,
-        reasoning: "skipJudge: technical trigger auto-approved (LLM bypassed)",
+        reasoning: backtest?.skipJudge
+          ? "skipJudge: technical trigger auto-approved (LLM bypassed)"
+          : "LIVE_SKIP_JUDGE: technical trigger auto-approved (LLM bypassed)",
       };
     } else if (pineconeGate) {
       judge = {
@@ -303,6 +315,10 @@ export class ExecutionEngine {
         ? (snap.z_score_vwap ?? 0) > 0
           ? "SELL"
           : "BUY"
+        : hit.strategy === "VWAP_RECLAIM_REJECT"
+          ? (snap.vwap_signal ?? 1) < 0
+            ? "SELL"
+            : "BUY"
         : "BUY";
 
     const entryPrice =
@@ -343,6 +359,71 @@ export class ExecutionEngine {
       await insertTrade(doc);
     }
   }
+}
+
+type VolRegime = "LOW" | "MID" | "HIGH";
+
+function classifyVolRegime(sessionCandles: Ohlc1m[]): VolRegime | undefined {
+  const lookback = Math.max(10, Math.floor(env.volRegimeLookbackBars));
+  if (sessionCandles.length < lookback + 1) return undefined;
+
+  const slice = sessionCandles.slice(-lookback - 1);
+  const returnsPct: number[] = [];
+  for (let i = 1; i < slice.length; i++) {
+    const prev = slice[i - 1]!.c;
+    const curr = slice[i]!.c;
+    if (prev <= 0) continue;
+    returnsPct.push(((curr - prev) / prev) * 100);
+  }
+  if (returnsPct.length < 8) return undefined;
+
+  const mean = returnsPct.reduce((a, b) => a + b, 0) / returnsPct.length;
+  const variance =
+    returnsPct.reduce((s, r) => s + (r - mean) ** 2, 0) / returnsPct.length;
+  const sigma = Math.sqrt(variance);
+
+  if (sigma < env.volRegimeLowMaxPct) return "LOW";
+  if (sigma >= env.volRegimeHighMinPct) return "HIGH";
+  return "MID";
+}
+
+function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
+  if (strategy === "ORB_15M") {
+    return regime === "LOW"
+      ? env.volRegimeOrbLow
+      : regime === "MID"
+        ? env.volRegimeOrbMid
+        : env.volRegimeOrbHigh;
+  }
+  if (strategy === "MEAN_REV_Z") {
+    return regime === "LOW"
+      ? env.volRegimeMeanRevLow
+      : regime === "MID"
+        ? env.volRegimeMeanRevMid
+        : env.volRegimeMeanRevHigh;
+  }
+  if (strategy === "BIG_BOY_SWEEP") {
+    return regime === "LOW"
+      ? env.volRegimeBigBoyLow
+      : regime === "MID"
+        ? env.volRegimeBigBoyMid
+        : env.volRegimeBigBoyHigh;
+  }
+  return regime === "LOW"
+    ? env.volRegimeVwapLow
+    : regime === "MID"
+      ? env.volRegimeVwapMid
+      : env.volRegimeVwapHigh;
+}
+
+function applyVolRegimeGating(
+  triggers: TriggerHit[],
+  sessionCandles: Ohlc1m[]
+): TriggerHit[] {
+  if (!env.volRegimeSwitchEnabled || triggers.length === 0) return triggers;
+  const regime = classifyVolRegime(sessionCandles);
+  if (!regime) return triggers;
+  return triggers.filter((t) => allowedInRegime(t.strategy, regime));
 }
 
 function normalizeSnapshot(

@@ -47,6 +47,7 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `JUDGE_MODEL` | `deepseek/deepseek-chat` | Live judge (~$0.001/call) |
 | `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
 | `JUDGE_COOLDOWN_MS` | `900000` (15 min) | Min time between judge calls per ticker in live mode |
+| `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
 | `PINECONE_GATE_ENABLED` | `true` | Auto-approve from Pinecone without LLM if top match ≥ threshold |
 | `PINECONE_GATE_MIN_SCORE` | `0.98` | Cosine similarity threshold for auto-approval |
 
@@ -103,6 +104,28 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `BACKTEST_ENABLE_ORB_15M` | `true` | Enable ORB trigger evaluation |
 | `BACKTEST_ENABLE_MEAN_REV_Z` | `true` | Enable mean-reversion trigger evaluation |
 | `BACKTEST_ENABLE_BIG_BOY_SWEEP` | `true` | Enable liquidity sweep trigger evaluation |
+| `BACKTEST_ENABLE_VWAP_RECLAIM_REJECT` | `true` | Enable VWAP reclaim/rejection trigger evaluation |
+
+### Volatility Regime Switch (strategy gating)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `VOL_REGIME_SWITCH_ENABLED` | `false` | If `true`, allows/blocks strategies by intraday volatility regime |
+| `VOL_REGIME_LOOKBACK_BARS` | `30` | Number of 1m bars used for realized volatility regime classification |
+| `VOL_REGIME_LOW_MAX_PCT` | `0.08` | Realized vol % below this => `LOW` regime |
+| `VOL_REGIME_HIGH_MIN_PCT` | `0.22` | Realized vol % at/above this => `HIGH` regime |
+| `VOL_REGIME_ORB_LOW` | `false` | Allow ORB in `LOW` regime |
+| `VOL_REGIME_ORB_MID` | `true` | Allow ORB in `MID` regime |
+| `VOL_REGIME_ORB_HIGH` | `true` | Allow ORB in `HIGH` regime |
+| `VOL_REGIME_MEANREV_LOW` | `true` | Allow MEAN_REV_Z in `LOW` regime |
+| `VOL_REGIME_MEANREV_MID` | `true` | Allow MEAN_REV_Z in `MID` regime |
+| `VOL_REGIME_MEANREV_HIGH` | `false` | Allow MEAN_REV_Z in `HIGH` regime |
+| `VOL_REGIME_BIGBOY_LOW` | `false` | Allow BIG_BOY_SWEEP in `LOW` regime |
+| `VOL_REGIME_BIGBOY_MID` | `true` | Allow BIG_BOY_SWEEP in `MID` regime |
+| `VOL_REGIME_BIGBOY_HIGH` | `true` | Allow BIG_BOY_SWEEP in `HIGH` regime |
+| `VOL_REGIME_VWAP_LOW` | `false` | Allow VWAP_RECLAIM_REJECT in `LOW` regime |
+| `VOL_REGIME_VWAP_MID` | `true` | Allow VWAP_RECLAIM_REJECT in `MID` regime |
+| `VOL_REGIME_VWAP_HIGH` | `true` | Allow VWAP_RECLAIM_REJECT in `HIGH` regime |
 
 **Tuning guide:**
 - If you keep getting stopped out before reaching target → widen stop (`EXIT_STOP_PCT=0.02`)
