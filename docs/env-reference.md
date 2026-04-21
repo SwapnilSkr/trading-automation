@@ -23,6 +23,16 @@ Full list of all `.env` variables, their defaults, and when to change them.
 | `WEEKEND_OPTIMIZE_SKIP_EXISTING` | `true` | When `true`, `weekend-optimize` batch-fetches Pinecone by id and skips OpenAI embed + upsert if the vector already exists |
 | `WEEKEND_OPTIMIZE_RESUME` | `true` | When `true`, persists per-ticker progress in Mongo so an interrupted run can skip finished tickers the same IST calendar day (same ticker universe). Use CLI `--no-resume` to force a clean checkpoint for that run |
 | `WEEKEND_OPTIMIZE_FETCH_BATCH` | `100` | Max ids per Pinecone `fetch` when checking existence |
+| `PINECONE_RU_SOFT_LIMIT` | `0` | Monthly read-unit soft cap (`0` disables); when reached, reads are paused if auto-disable is enabled |
+| `PINECONE_WU_SOFT_LIMIT` | `0` | Monthly write-unit soft cap (`0` disables); when reached, writes are paused if auto-disable is enabled |
+| `PINECONE_AUTO_DISABLE_READS_ON_RU_EXHAUST` | `true` | Auto-disables Pinecone reads for the remainder of the month on RU exhaustion/rate-limit errors |
+| `PINECONE_AUTO_DISABLE_WRITES_ON_WU_EXHAUST` | `true` | Auto-disables Pinecone writes for the remainder of the month on WU exhaustion/rate-limit errors |
+| `PINECONE_AUTO_EVICT_ON_STORAGE_FULL` | `true` | On storage-full upsert errors, evicts oldest IDs and retries |
+| `PINECONE_STORAGE_EVICT_BATCH` | `200` | Number of IDs deleted in one storage-pressure eviction pass |
+| `PINECONE_STORAGE_EVICT_SCAN_PAGES` | `10` | Max `listPaginated` pages scanned to collect eviction candidates |
+| `PINECONE_STORAGE_REALLOCATE_WAIT_MS` | `20000` | Wait after delete before retrying upsert to allow storage reallocation |
+| `PINECONE_STORAGE_MAX_EVICTION_RETRIES` | `3` | Max eviction+retry attempts per upsert |
+| `PINECONE_GOVERNOR_LOG_COOLDOWN_MS` | `60000` | Minimum interval between repeated Pinecone governor warnings |
 
 ---
 
@@ -110,6 +120,15 @@ If no API key: judge always returns `approve=false` (no trades fire).
 | `ANGEL_API_THROTTLE_MS` | `450` | Delay between getCandleData chunk requests |
 | `ANGEL_SYNC_TICKER_GAP_MS` | `800` | Extra pause between tickers in sync-history |
 | `QUOTE_BATCH_DELAY_MS` | `1100` | Delay between quote batches (≤50 symbols each) |
+| `ANGEL_HTTP_MIN_GAP_MS` | `0` | Shared in-process minimum gap between any SmartAPI calls (set this first before increasing fixed sleeps) |
+| `ANGEL_HTTP_MAX_CONCURRENCY` | `1` | Shared in-process SmartAPI concurrency cap |
+| `ANGEL_HTTP_403_RETRIES` | `2` | Retries for HTTP 403 responses |
+| `ANGEL_HTTP_429_RETRIES` | `2` | Retries for HTTP 429 responses |
+| `ANGEL_HTTP_403_RETRY_BASE_MS` | `1500` | Exponential retry base delay for 403/429 |
+| `ANGEL_HTTP_RATE_LIMIT_COOLDOWN_MS` | `1500` | Limiter cooldown after rate-limit responses |
+| `ANGEL_HTTP_MAX_BACKOFF_MS` | `30000` | Max cooldown cap for repeated 403/429 |
+| `ANGEL_HTTP_RETRY_JITTER_MS` | `200` | Random jitter added to retry delay |
+| `ANGEL_HTTP_LOG_LIMITER` | `false` | Logs SmartAPI limiter queue/cooldown diagnostics |
 
 **TOTP_SEED:** Go to Angel SmartAPI dashboard → Enable TOTP → you'll see a QR code and a Base32 secret below it. Use the Base32 secret here (looks like `4OCBO5ENLFSES4EXHCAXEPJBYU`), NOT the 6-digit rotating code.
 

@@ -68,6 +68,22 @@ function aggregateLastNMinutes(candles: Ohlc1m[], n: number): Ohlc1m | undefined
   };
 }
 
+interface TimelineBar {
+  ticker: string;
+  bar: Ohlc1m;
+  index: number;
+}
+
+interface PendingEntry {
+  ticker: string;
+  activateAtMs: number;
+  signalPrice: number;
+  side: "BUY" | "SELL";
+  qty: number;
+  atrAtEntry?: number;
+  doc: TradeLogDoc;
+}
+
 /**
  * Replay Mongo `ohlc_1m` bar-by-bar through the execution engine with a
  * simulated IST clock. Includes stop-loss / profit-target exit simulation
@@ -100,6 +116,9 @@ export async function runBacktestReplay(
     tradesEntered: 0,
   };
 
+  const broker = config.skipOrders ? new AngelOneStubBroker() : createBroker();
+  const engine = new ExecutionEngine(broker);
+
   let d = start;
   while (d <= end) {
     if (!isIndianWeekday(d)) {
@@ -123,124 +142,162 @@ export async function runBacktestReplay(
       }
     }
     const marketSnapshotCache = new Map<number, BacktestPassOptions["marketSnapshot"]>();
+    const newsCache = new Map<number, string[]>();
+    const sessionStart = d.set({ hour: 9, minute: 15 }).toJSDate();
+    const sessionEnd = d.set({ hour: 15, minute: 29 }).toJSDate();
 
+    const barsByTicker = new Map<string, Ohlc1m[]>();
     for (const ticker of dayTickers) {
-      const broker = config.skipOrders ? new AngelOneStubBroker() : createBroker();
-      const engine = new ExecutionEngine(broker);
       const dayBars = await fetchOhlcRange(ticker, dayStart, dayEnd);
       if (dayBars.length < 40) {
-        console.warn(`[Backtest] skip ${ticker} ${d.toISODate()}: only ${dayBars.length} bars`);
+        console.warn(
+          `[Backtest] skip ${ticker} ${d.toISODate()}: only ${dayBars.length} bars`
+        );
         continue;
       }
-
-      const sessionStart = d.set({ hour: 9, minute: 15 }).toJSDate();
-      const sessionEnd = d.set({ hour: 15, minute: 29 }).toJSDate();
       const sessionBars = dayBars.filter(
         (b) => b.ts >= sessionStart && b.ts <= sessionEnd
       );
-      if (sessionBars.length === 0) continue;
+      if (sessionBars.length > 0) barsByTicker.set(ticker, sessionBars);
+    }
+    if (barsByTicker.size === 0) {
+      d = d.plus({ days: 1 });
+      continue;
+    }
 
-      // Open positions for this ticker+day
-      let openPositions: SimPosition[] = [];
-      const pendingEntries: Array<{
-        activateIndex: number;
-        signalPrice: number;
-        side: "BUY" | "SELL";
-        qty: number;
-        atrAtEntry?: number;
-        doc: TradeLogDoc;
-      }> = [];
-      let lastScanMs = sessionStart.getTime() - 1; // force first scan
+    const timeline = new Map<number, TimelineBar[]>();
+    for (const [ticker, bars] of barsByTicker) {
+      bars.forEach((bar, index) => {
+        const ts = bar.ts.getTime();
+        const row = timeline.get(ts) ?? [];
+        row.push({ ticker, bar, index });
+        timeline.set(ts, row);
+      });
+    }
+    const timelineMs = [...timeline.keys()].sort((a, b) => a - b);
 
-      for (let bi = 0; bi < sessionBars.length; bi++) {
-        const bar = sessionBars[bi]!;
+    let openPositions: SimPosition[] = [];
+    const pendingEntries: PendingEntry[] = [];
+    const lastScanByTicker = new Map<string, number>();
+    const latestBarsByTicker = new Map<string, Ohlc1m>();
+    const candlesByTicker = new Map<string, Ohlc1m[]>();
 
-        // 0. Activate pending entries (latency model)
-        if (pendingEntries.length > 0) {
-          const ready = pendingEntries.filter((p) => p.activateIndex === bi);
-          if (ready.length > 0) {
-            for (const p of ready) {
-              if (openPositions.length >= env.maxConcurrentTrades) continue;
-              const ref =
-                exitParams.realism.entryLatencyBars > 0 ? bar.o : p.signalPrice;
-              const fill = applyExecutionFill(
-                ref,
-                p.side,
-                bar,
-                p.qty,
-                exitParams.realism
-              );
-              p.doc.entry_time = bar.ts;
-              p.doc.entry_price = fill.fillPrice;
-              openPositions.push({
-                ticker,
-                entryPrice: fill.fillPrice,
-                qty: p.qty,
-                remainingQty: p.qty,
-                realizedPnl: 0,
-                partialExits: [],
-                completedPartialReasons: [],
-                entryReferencePrice: ref,
-                entrySlippageRupees: fill.slippageRupees,
-                side: p.side,
-                strategy: p.doc.strategy as StrategyId,
-                entryTime: bar.ts,
-                peakPrice: fill.fillPrice,
-                atrAtEntry: p.atrAtEntry,
-                doc: p.doc,
-              });
-              summary.tradesEntered += 1;
-            }
-          }
-          const leftovers = pendingEntries.filter((p) => p.activateIndex > bi);
-          pendingEntries.length = 0;
-          pendingEntries.push(...leftovers);
-        }
+    for (const [ticker] of barsByTicker) {
+      lastScanByTicker.set(ticker, sessionStart.getTime() - 1);
+      candlesByTicker.set(ticker, []);
+    }
 
-        // 1. Check exits for open positions on this bar
-        if (openPositions.length > 0) {
-          openPositions = await processBarForExits(
-            openPositions,
-            bar,
-            exitParams,
-            config.persistTrades
+    for (const tsMs of timelineMs) {
+      const rows = timeline.get(tsMs) ?? [];
+      for (const r of rows) {
+        latestBarsByTicker.set(r.ticker, r.bar);
+        const arr = candlesByTicker.get(r.ticker) ?? [];
+        arr.push(r.bar);
+        candlesByTicker.set(r.ticker, arr);
+      }
+
+      if (pendingEntries.length > 0) {
+        const remainingPending: PendingEntry[] = [];
+        for (const p of pendingEntries) {
+          const activeRow = rows.find(
+            (r) => r.ticker === p.ticker && tsMs >= p.activateAtMs
           );
+          if (!activeRow) {
+            remainingPending.push(p);
+            continue;
+          }
+          if (openPositions.length >= env.maxConcurrentTrades) continue;
+          const ref =
+            exitParams.realism.entryLatencyBars > 0
+              ? activeRow.bar.o
+              : p.signalPrice;
+          const fill = applyExecutionFill(
+            ref,
+            p.side,
+            activeRow.bar,
+            p.qty,
+            exitParams.realism
+          );
+          p.doc.entry_time = activeRow.bar.ts;
+          p.doc.entry_price = fill.fillPrice;
+          openPositions.push({
+            ticker: p.ticker,
+            entryPrice: fill.fillPrice,
+            qty: p.qty,
+            remainingQty: p.qty,
+            realizedPnl: 0,
+            partialExits: [],
+            completedPartialReasons: [],
+            entryReferencePrice: ref,
+            entrySlippageRupees: fill.slippageRupees,
+            side: p.side,
+            strategy: p.doc.strategy as StrategyId,
+            entryTime: activeRow.bar.ts,
+            peakPrice: fill.fillPrice,
+            atrAtEntry: p.atrAtEntry,
+            doc: p.doc,
+          });
+          summary.tradesEntered += 1;
         }
+        pendingEntries.length = 0;
+        pendingEntries.push(...remainingPending);
+      }
 
-        // 2. Decide whether to run a scan at this bar
-        const elapsedMin = (bar.ts.getTime() - lastScanMs) / 60_000;
+      for (const r of rows) {
+        const sameTicker = openPositions.filter((p) => p.ticker === r.ticker);
+        if (sameTicker.length === 0) continue;
+        const stillOpen = await processBarForExits(
+          sameTicker,
+          r.bar,
+          exitParams,
+          config.persistTrades
+        );
+        openPositions = openPositions.filter((p) => p.ticker !== r.ticker);
+        openPositions.push(...stillOpen);
+      }
+
+      for (const r of rows) {
+        const lastScan = lastScanByTicker.get(r.ticker) ?? sessionStart.getTime() - 1;
+        const elapsedMin = (tsMs - lastScan) / 60_000;
         const haveCapacity =
           openPositions.length + pendingEntries.length < env.maxConcurrentTrades;
         if (elapsedMin < config.stepMinutes || !haveCapacity) continue;
 
+        lastScanByTicker.set(r.ticker, tsMs);
         summary.steps += 1;
-        lastScanMs = bar.ts.getTime();
 
-        const sessionCandles = sessionBars.slice(0, bi + 1);
+        const sessionCandles = candlesByTicker.get(r.ticker) ?? [];
         if (sessionCandles.length < 30) continue;
 
         const last5m = aggregateLastNMinutes(sessionCandles, 5);
-        const newsHeadlines = await getHeadlinesForBacktest(bar.ts);
-        let marketSnapshot = marketSnapshotCache.get(bar.ts.getTime());
-        if (env.marketGateEnabled && !marketSnapshotCache.has(bar.ts.getTime())) {
-          marketSnapshot = await buildMarketRegimeSnapshot(dayTickers, bar.ts);
-          marketSnapshotCache.set(bar.ts.getTime(), marketSnapshot);
+        let newsHeadlines = newsCache.get(tsMs);
+        if (!newsHeadlines) {
+          newsHeadlines = await getHeadlinesForBacktest(r.bar.ts);
+          newsCache.set(tsMs, newsHeadlines);
         }
 
-        // Capture newly entered trades so we can simulate exits
-        const newEntries: {
+        let marketSnapshot = marketSnapshotCache.get(tsMs);
+        if (env.marketGateEnabled && !marketSnapshot) {
+          marketSnapshot = await buildMarketRegimeSnapshot(
+            [...barsByTicker.keys()],
+            r.bar.ts
+          );
+          marketSnapshotCache.set(tsMs, marketSnapshot);
+        }
+
+        const newEntries: Array<{
           doc: TradeLogDoc;
           entryPrice: number;
           side: "BUY" | "SELL";
           qty: number;
           atrAtEntry?: number;
-        }[] = [];
+        }> = [];
 
         const bt: BacktestPassOptions = {
-          simulatedAt: bar.ts,
+          simulatedAt: r.bar.ts,
           judgeModel: config.judgeModel ?? env.judgeModelBacktest,
           skipOrders: config.skipOrders,
-          persistBacktest: false, // we handle persistence below
+          persistBacktest: false,
           runId,
           skipJudge: config.skipJudge,
           marketSnapshot,
@@ -251,12 +308,11 @@ export async function runBacktestReplay(
             qty: p.remainingQty,
           })),
           onTradeEntry: async (doc, entryPrice, side) => {
-            const qty = doc.qty ?? env.backtestPositionQty;
             newEntries.push({
               doc,
               entryPrice,
               side,
-              qty,
+              qty: doc.qty ?? env.backtestPositionQty,
               atrAtEntry: doc.atr_at_entry,
             });
           },
@@ -264,35 +320,45 @@ export async function runBacktestReplay(
 
         await engine.runScanningPass(
           {
-            ticker,
+            ticker: r.ticker,
             sessionCandles,
             last5m,
-            niftyTrendHint: `Replay IST ${d.toFormat("yyyy-MM-dd")} ${DateTime.fromJSDate(bar.ts, { zone: IST }).toFormat("HH:mm")}`,
+            niftyTrendHint: `Replay IST ${d.toFormat("yyyy-MM-dd")} ${DateTime.fromJSDate(r.bar.ts, { zone: IST }).toFormat("HH:mm")}`,
             newsHeadlines,
+            marketSnapshot,
           },
           bt
         );
         summary.scanCalls += 1;
 
-        // Register new positions for exit tracking
-        for (const { doc, entryPrice, side, qty, atrAtEntry } of newEntries) {
-          const activateIndex = bi + Math.max(0, exitParams.realism.entryLatencyBars);
-          if (activateIndex >= sessionBars.length) continue;
+        for (const ne of newEntries) {
+          const bars = barsByTicker.get(r.ticker);
+          if (!bars) continue;
+          const activationIdx = Math.min(
+            bars.length - 1,
+            r.index + Math.max(0, exitParams.realism.entryLatencyBars)
+          );
+          const activationBar = bars[activationIdx];
+          if (!activationBar) continue;
           pendingEntries.push({
-            activateIndex,
-            signalPrice: entryPrice,
-            side,
-            qty,
-            atrAtEntry,
-            doc,
+            ticker: r.ticker,
+            activateAtMs: activationBar.ts.getTime(),
+            signalPrice: ne.entryPrice,
+            side: ne.side,
+            qty: ne.qty,
+            atrAtEntry: ne.atrAtEntry,
+            doc: ne.doc,
           });
         }
       }
+    }
 
-      // 3. EOD: force-close everything at last bar's close
-      const lastBar = sessionBars[sessionBars.length - 1]!;
-      if (openPositions.length > 0) {
-        await closeAllAtEod(openPositions, lastBar, exitParams, config.persistTrades);
+    if (openPositions.length > 0) {
+      for (const [ticker, lastBar] of latestBarsByTicker) {
+        const sameTicker = openPositions.filter((p) => p.ticker === ticker);
+        if (sameTicker.length === 0) continue;
+        await closeAllAtEod(sameTicker, lastBar, exitParams, config.persistTrades);
+        openPositions = openPositions.filter((p) => p.ticker !== ticker);
       }
     }
 

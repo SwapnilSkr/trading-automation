@@ -36,7 +36,7 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
 | OBSERVATION | 09:15–09:30 | VWAP calibration, no trades |
 | EXECUTION | 09:30–15:15 | Scan every 60s — triggers → vol/strategy gates → hard risk gates → Pinecone consensus → judge → order |
 | SQUARE_OFF | 15:15–15:30 | Close all intraday positions |
-| SYNC | 15:30–17:00 | Backfill today's 1m OHLC from Angel |
+| SYNC | 15:30–17:00 | Backfill today's 1m OHLC from Angel (shared SmartAPI limiter prevents burst rate-limit spikes) |
 | POST_MORTEM | 18:00–21:00 | Nightly discovery-sync (Nifty 100 rescore) |
 
 **Exit logic (per position, live paper + backtest):**
@@ -101,7 +101,7 @@ bun run discovery-sync -- --days 30 --top 20
 # Optional: pull the latest Nifty 100 constituents from NSE and refresh data/ind_nifty100list.csv
 bun run discovery-sync -- --days 30 --top 20 --refresh-universe
 ```
-Scores all 100 Nifty stocks by momentum (5-day return × volume ratio), picks the top 20, and backfills their 1m candles. Takes ~20–40 minutes due to Angel rate limits.
+Scores all 100 Nifty stocks by momentum (5-day return × volume ratio), picks the top 20, and backfills their 1m candles. Uses the shared SmartAPI limiter (`ANGEL_HTTP_*`) so rate-limit retries are adaptive instead of fixed sleeps only.
 
 **Universe source:** By default symbols come from `data/ind_nifty100list.csv` in the repo. **`--refresh-universe`** downloads the official NSE Nifty 100 CSV, overwrites that file when the download succeeds (≥90 symbols), then scores; if NSE fails, it falls back to the existing CSV. The daemon's **nightly** `discovery-sync` does **not** pass this flag (it always uses the on-disk CSV unless you change the code).
 
@@ -122,7 +122,7 @@ Writes **one row per calendar day** into Mongo ``news_context`` (used by ``fetch
 ```bash
 bun run weekend-optimize
 ```
-Walks 6 months of 1m candles for every ticker in Mongo, finds bars with >2% moves in the next 30 minutes, embeds the preceding 30-bar window, and upserts to Pinecone. This is what powers the Pinecone gate. Run this every weekend to keep memory fresh.
+Walks 6 months of 1m candles for every ticker in Mongo, finds bars with >2% moves in the next 30 minutes, embeds the preceding 30-bar window, and upserts to Pinecone. Pinecone usage now runs through a quota/storage governor (`PINECONE_*_SOFT_LIMIT`, auto-disable on RU/WU exhaustion, oldest-first eviction on storage-full).
 
 Note: mined vectors use `strategy=MINED`, so they enrich judge context immediately. Strict no-LLM auto-approval requires same-strategy neighbors; expect more judge calls until strategy-labelled memory accumulates.
 
@@ -130,8 +130,8 @@ Note: mined vectors use `strategy=MINED`, so they enrich judge context immediate
 ```bash
 bun run backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots
 ```
-Full bar-by-bar replay with exit simulation (stop/target/trailing). Writes to `trades_backtest` with complete entry + exit + PnL.
-Replay uses causal context: news is filtered by `ts <= simulated bar`, watchlist snapshots are date-bound, and Pinecone neighbors are filtered to dates strictly before the simulated session day.
+Full portfolio-level bar replay with global concurrent-position state and exit simulation (stop/target/trailing). Writes to `trades_backtest` with complete entry + exit + PnL.
+Replay uses causal context: news is filtered by `ts <= simulated bar`, watchlist snapshots are date-bound, and Pinecone neighbors are filtered to dates strictly before the simulated session day. Replay now evaluates each simulated timestamp across all active tickers in one timeline so portfolio gates are tested under concurrent exposures.
 
 ### Step 6 — Analyze results
 ```bash

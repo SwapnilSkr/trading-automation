@@ -121,17 +121,14 @@
 │                                                                     │
 │  runBacktestReplay()                                                │
 │    └─ for each IST weekday in [from, to]:                           │
-│         └─ load dayBars from MongoDB ohlc_1m                        │
-│              └─ for each 1m bar (chronological):                    │
-│                   ├─ checkExitOnBar() → partial exits + ATR trail   │
-│                   │   → insertBacktestTrade() with full PnL         │
-│                   │                                                 │
-│                   └─ (every stepMinutes) runScanningPass()          │
-│                        └─ same engine as live                        │
-│                             (but Pinecone neighbors filtered        │
-│                              to dates before simulated day)         │
-│                             → onTradeEntry() → SimPosition          │
-│                               (stores atrAtEntry for exit sim)      │
+│         ├─ load all session bars for active day tickers             │
+│         ├─ build one simulated timeline across all tickers          │
+│         └─ per timestamp:                                            │
+│              ├─ activate pending entries (latency model)            │
+│              ├─ process ticker exits on arriving bars               │
+│              └─ runScanningPass() per ticker cadence with           │
+│                   global portfolio state for risk/capacity gates    │
+│                   (Pinecone neighbors still causal in replay)       │
 │                                                                     │
 │  backtest-analyze → win rate, profit factor, Sharpe, max DD        │
 │                     per-strategy and per-ticker breakdowns          │
@@ -194,7 +191,8 @@ src/
 │   └── patternEmbedding.ts      # Log-returns → text → embedding API → 1536-dim vector
 │
 ├── pinecone/
-│   └── patternStore.ts          # Upsert patterns, query top-K, scoreFromNeighbors
+│   ├── patternStore.ts          # Upsert/query/fetch with governor-aware guards
+│   └── quotaGovernor.ts         # RU/WU/storage governor + oldest-first eviction
 │
 ├── backtest/
 │   ├── BacktestOrchestrator.ts  # Full replay with exit simulation
@@ -204,6 +202,8 @@ src/
 │   ├── types.ts                 # BrokerClient interface
 │   ├── factory.ts               # Real vs stub broker selection
 │   ├── angelOneBroker.ts        # Angel SmartAPI: auth, candles, quotes, orders
+│   ├── smartApi/http.ts         # SmartAPI HTTP client + retries
+│   ├── smartApi/rateLimiter.ts  # Shared limiter/cooldown for 403/429 pressure
 │   └── angelOneStub.ts          # No-op stub (when credentials missing)
 │
 ├── db/
