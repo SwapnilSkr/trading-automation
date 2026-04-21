@@ -1,6 +1,13 @@
 import { Pinecone } from "@pinecone-database/pinecone";
 import { env } from "../config/env.js";
 import type { PatternMeta } from "../types/domain.js";
+import {
+  evictOldestPineconeRecords,
+  notePineconeError,
+  notePineconeUsage,
+  pineconeReadsAllowed,
+  pineconeWritesAllowed,
+} from "./quotaGovernor.js";
 
 function client(): Pinecone | null {
   const key = env.pineconeApiKey();
@@ -29,13 +36,21 @@ export async function fetchExistingPatternIds(
 ): Promise<Set<string>> {
   const pc = client();
   if (!pc || ids.length === 0) return new Set();
+  if (!(await pineconeReadsAllowed())) return new Set();
   const index = pc.index(env.pineconeIndex);
   const ns = index.namespace(env.pineconeNamespace);
   const existing = new Set<string>();
   const chunk = Math.max(1, env.weekendOptimizeFetchBatch);
   for (let i = 0; i < ids.length; i += chunk) {
     const slice = ids.slice(i, i + chunk);
-    const res = await ns.fetch({ ids: slice });
+    let res;
+    try {
+      res = await ns.fetch({ ids: slice });
+    } catch (e) {
+      await notePineconeError(e);
+      return existing;
+    }
+    await notePineconeUsage((res as { usage?: unknown }).usage);
     const records = res.records ?? {};
     for (const id of Object.keys(records)) existing.add(id);
   }
@@ -52,10 +67,31 @@ export async function upsertPatternVector(
     console.warn("[Pinecone] PINECONE_API_KEY missing — skip upsert");
     return;
   }
+  if (!(await pineconeWritesAllowed())) return;
   const index = pc.index(env.pineconeIndex);
-  await index.namespace(env.pineconeNamespace).upsert({
+  const payload = {
     records: [{ id, values: vector, metadata: flatMeta(meta) }],
-  });
+  };
+  for (let attempt = 0; attempt <= env.pineconeStorageMaxEvictionRetries; attempt++) {
+    try {
+      await index.namespace(env.pineconeNamespace).upsert(payload);
+      return;
+    } catch (e) {
+      const errKind = await notePineconeError(e);
+      if (
+        errKind !== "STORAGE_FULL" ||
+        !env.pineconeAutoEvictOnStorageFull ||
+        attempt >= env.pineconeStorageMaxEvictionRetries
+      ) {
+        throw e;
+      }
+      const deleted = await evictOldestPineconeRecords(index);
+      console.warn(
+        `[Pinecone] storage full; evicted ${deleted} oldest records, retry ${attempt + 1}/${env.pineconeStorageMaxEvictionRetries}`
+      );
+      if (deleted <= 0) throw e;
+    }
+  }
 }
 
 export interface SimilarPattern {
@@ -70,12 +106,20 @@ export async function querySimilarPatterns(
 ): Promise<SimilarPattern[]> {
   const pc = client();
   if (!pc) return [];
+  if (!(await pineconeReadsAllowed())) return [];
   const index = pc.index(env.pineconeIndex);
-  const res = await index.namespace(env.pineconeNamespace).query({
-    vector,
-    topK,
-    includeMetadata: true,
-  });
+  let res;
+  try {
+    res = await index.namespace(env.pineconeNamespace).query({
+      vector,
+      topK,
+      includeMetadata: true,
+    });
+  } catch (e) {
+    await notePineconeError(e);
+    return [];
+  }
+  await notePineconeUsage((res as { usage?: unknown }).usage);
   const matches = res.matches ?? [];
   return matches.map((m) => {
     const md = (m.metadata ?? {}) as Record<string, unknown>;
