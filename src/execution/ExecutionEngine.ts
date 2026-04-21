@@ -78,8 +78,8 @@ interface LivePosition {
 export class ExecutionEngine {
   private safety: SafetyState = createSafetyState();
   private openCount = 0;
-  /** Live: last time we ran judge or Pinecone gate for this ticker */
-  private lastJudgeByTicker = new Map<string, number>();
+  /** Live: last time we ran judge or Pinecone gate for this strategy:ticker */
+  private lastJudgeByStrategyTicker = new Map<string, number>();
   /** Live paper positions tracked for stop/target management */
   private livePositions = new Map<string, LivePosition>();
 
@@ -358,9 +358,10 @@ export class ExecutionEngine {
     if (!checkSafety(this.safety, this.openCount)) return;
 
     const nowMs = backtest?.simulatedAt.getTime() ?? Date.now();
+    const strategyTickerKey = `${hit.strategy}:${ticker}`;
     if (
       !backtest &&
-      nowMs - (this.lastJudgeByTicker.get(ticker) ?? 0) < env.judgeCooldownMs
+      nowMs - (this.lastJudgeByStrategyTicker.get(strategyTickerKey) ?? 0) < env.judgeCooldownMs
     ) {
       if (env.liveDebugScans) {
         console.log(
@@ -452,7 +453,8 @@ export class ExecutionEngine {
     }
 
     if (!backtest) {
-      this.lastJudgeByTicker.set(ticker, nowMs);
+      const strategyTickerKey = `${hit.strategy}:${ticker}`;
+      this.lastJudgeByStrategyTicker.set(strategyTickerKey, nowMs);
     }
 
     if (!backtest && env.liveDebugScans) {
