@@ -33,7 +33,11 @@ export async function syncOhlcForRange(
     const rows = await broker.fetchIntradayOhlc1m(ticker, from, to);
     if (rows.length) await upsertOhlcBatch(rows);
     out.push({ ticker, bars: rows.length });
-    if (i < list.length - 1 && env.angelSyncTickerGapMs > 0) {
+    if (
+      i < list.length - 1 &&
+      env.angelHttpMinGapMs <= 0 &&
+      env.angelSyncTickerGapMs > 0
+    ) {
       await sleep(env.angelSyncTickerGapMs);
     }
   }

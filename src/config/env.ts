@@ -104,10 +104,22 @@ export const env = {
    * response before the next request starts (0 = only serialization, no extra delay).
    */
   angelHttpMinGapMs: num("ANGEL_HTTP_MIN_GAP_MS", 0),
+  /** Max concurrent SmartAPI calls in-process; keep 1 unless Angel account limits are explicitly higher */
+  angelHttpMaxConcurrency: num("ANGEL_HTTP_MAX_CONCURRENCY", 1),
   /** Retries when SmartAPI returns HTTP 403 (often rate limit); 0 disables */
   angelHttp403Retries: num("ANGEL_HTTP_403_RETRIES", 2),
+  /** Retries when SmartAPI returns HTTP 429 */
+  angelHttp429Retries: num("ANGEL_HTTP_429_RETRIES", 2),
   /** Base backoff for 403 retries (ms); multiplied by 2^attempt */
   angelHttp403RetryBaseMs: num("ANGEL_HTTP_403_RETRY_BASE_MS", 1500),
+  /** Base cooldown injected into limiter after a rate-limit response; exponential by attempt */
+  angelHttpRateLimitCooldownMs: num("ANGEL_HTTP_RATE_LIMIT_COOLDOWN_MS", 1500),
+  /** Max cooldown cap for repeated 403/429s */
+  angelHttpMaxBackoffMs: num("ANGEL_HTTP_MAX_BACKOFF_MS", 30_000),
+  /** Random jitter added to rate-limit retries to avoid synchronized bursts */
+  angelHttpRetryJitterMs: num("ANGEL_HTTP_RETRY_JITTER_MS", 200),
+  /** If true, emits limiter queue/cooldown diagnostics */
+  angelHttpLogLimiter: bool("ANGEL_HTTP_LOG_LIMITER", false),
 
   /** Pause between `getCandleData` chunk requests to avoid Angel rate limits (403) */
   angelApiThrottleMs: num("ANGEL_API_THROTTLE_MS", 450),
@@ -201,6 +213,35 @@ export const env = {
   weekendOptimizeResume: process.env.WEEKEND_OPTIMIZE_RESUME !== "false",
   /** Pinecone fetch batch size for existence checks */
   weekendOptimizeFetchBatch: num("WEEKEND_OPTIMIZE_FETCH_BATCH", 100),
+  /** Pinecone read unit monthly soft cap (0 disables soft-cap enforcement) */
+  pineconeRuSoftLimit: num("PINECONE_RU_SOFT_LIMIT", 0),
+  /** Pinecone write unit monthly soft cap (0 disables soft-cap enforcement) */
+  pineconeWuSoftLimit: num("PINECONE_WU_SOFT_LIMIT", 0),
+  /** If true, auto-disable Pinecone reads after RU quota/rate-limit exhaustion */
+  pineconeAutoDisableReadsOnRuExhaust: bool(
+    "PINECONE_AUTO_DISABLE_READS_ON_RU_EXHAUST",
+    true
+  ),
+  /** If true, auto-disable Pinecone writes after WU quota/rate-limit exhaustion */
+  pineconeAutoDisableWritesOnWuExhaust: bool(
+    "PINECONE_AUTO_DISABLE_WRITES_ON_WU_EXHAUST",
+    true
+  ),
+  /** If true, storage-full upserts trigger oldest-id eviction and retry */
+  pineconeAutoEvictOnStorageFull: bool(
+    "PINECONE_AUTO_EVICT_ON_STORAGE_FULL",
+    true
+  ),
+  /** Oldest IDs removed in one eviction pass when storage is full */
+  pineconeStorageEvictBatch: num("PINECONE_STORAGE_EVICT_BATCH", 200),
+  /** Max pages scanned while collecting eviction candidates */
+  pineconeStorageEvictScanPages: num("PINECONE_STORAGE_EVICT_SCAN_PAGES", 10),
+  /** Wait after delete before retrying upsert (storage reallocation lag) */
+  pineconeStorageReallocateWaitMs: num("PINECONE_STORAGE_REALLOCATE_WAIT_MS", 20_000),
+  /** Max eviction+retry attempts for one upsert */
+  pineconeStorageMaxEvictionRetries: num("PINECONE_STORAGE_MAX_EVICTION_RETRIES", 3),
+  /** Cooldown between governor state writes/log lines */
+  pineconeGovernorLogCooldownMs: num("PINECONE_GOVERNOR_LOG_COOLDOWN_MS", 60_000),
 
   /**
    * If set, `POST /v1/emergency/square-off` requires header `X-Emergency-Key: <value>`.

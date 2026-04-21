@@ -1,5 +1,10 @@
 import { env } from "../../config/env.js";
 import { SMART_API_ROOT } from "./endpoints.js";
+import {
+  noteSmartApiRateLimit,
+  retryJitterMs,
+  scheduleSmartApiCall,
+} from "./rateLimiter.js";
 
 export interface SmartApiJson {
   status?: boolean;
@@ -27,11 +32,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class SmartApiHttp {
-  /** Single-flight queue: at most one SmartAPI request in flight at a time */
-  private chain: Promise<unknown> = Promise.resolve();
-  /** Earliest time the next request may start (after min-gap following previous completion) */
-  private nextAllowedAtMs = 0;
-
   constructor(
     private readonly apiKey: string,
     private readonly localIp: string,
@@ -56,41 +56,29 @@ export class SmartApiHttp {
     return h;
   }
 
-  /**
-   * Serialize every SmartAPI call and optionally enforce a quiet period after each response.
-   */
-  private schedule<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.chain.then(async () => {
-      const gap = env.angelHttpMinGapMs;
-      const wait = Math.max(0, this.nextAllowedAtMs - Date.now());
-      if (wait > 0) {
-        await sleep(wait);
-      }
-      try {
-        return await fn();
-      } finally {
-        this.nextAllowedAtMs = Date.now() + gap;
-      }
-    });
-    this.chain = run.then(() => {}).catch(() => {});
-    return run as Promise<T>;
-  }
-
   private async fetchWith403Retry(
     url: string,
     init: RequestInit
   ): Promise<Response> {
-    const max = env.angelHttp403Retries;
-    const base = env.angelHttp403RetryBaseMs;
+    const max403 = Math.max(0, env.angelHttp403Retries);
+    const max429 = Math.max(0, env.angelHttp429Retries);
+    const maxAttempts = Math.max(max403, max429);
+    const base = Math.max(1, env.angelHttp403RetryBaseMs);
     let last: Response | undefined;
-    for (let attempt = 0; attempt <= max; attempt++) {
+
+    for (let attempt = 0; attempt <= maxAttempts; attempt++) {
       last = await fetch(url, init);
-      if (last.status !== 403 || attempt >= max) {
+      const is403 = last.status === 403;
+      const is429 = last.status === 429;
+      const capped =
+        (is403 && attempt >= max403) || (is429 && attempt >= max429);
+      if ((!is403 && !is429) || capped) {
         return last;
       }
-      const delay = base * 2 ** attempt;
+      const delay = base * 2 ** attempt + retryJitterMs();
+      noteSmartApiRateLimit(attempt, last.status);
       console.warn(
-        `[Angel] SmartAPI HTTP 403 — retry ${attempt + 1}/${max} in ${delay}ms`
+        `[Angel] SmartAPI HTTP ${last.status} — retry ${attempt + 1}/${Math.max(max403, max429)} in ${delay}ms`
       );
       await sleep(delay);
     }
@@ -102,7 +90,9 @@ export class SmartApiHttp {
     body: Record<string, unknown>,
     accessToken: string | null
   ): Promise<SmartApiJson> {
-    return this.schedule(() => this.postUnqueued(path, body, accessToken));
+    return scheduleSmartApiCall(() =>
+      this.postUnqueued(path, body, accessToken)
+    );
   }
 
   private async postUnqueued(
@@ -126,7 +116,7 @@ export class SmartApiHttp {
   }
 
   async get(path: string, accessToken: string | null): Promise<SmartApiJson> {
-    return this.schedule(() => this.getUnqueued(path, accessToken));
+    return scheduleSmartApiCall(() => this.getUnqueued(path, accessToken));
   }
 
   private async getUnqueued(

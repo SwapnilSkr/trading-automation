@@ -183,7 +183,7 @@ export class AngelOneBroker implements BrokerClient {
         all.push(...parseCandlePayload(res.data, ticker, tradingsymbol));
       }
 
-      if (env.angelApiThrottleMs > 0) {
+      if (env.angelHttpMinGapMs <= 0 && env.angelApiThrottleMs > 0) {
         await new Promise((r) => setTimeout(r, env.angelApiThrottleMs));
       }
 
@@ -236,7 +236,7 @@ export class AngelOneBroker implements BrokerClient {
     }
 
     const rows = parseCandlePayload(res.data, ticker, tradingsymbol);
-    if (env.angelApiThrottleMs > 0) {
+    if (env.angelHttpMinGapMs <= 0 && env.angelApiThrottleMs > 0) {
       await new Promise((r) => setTimeout(r, env.angelApiThrottleMs));
     }
     return dedupeSortOhlc(rows);
@@ -283,7 +283,11 @@ export class AngelOneBroker implements BrokerClient {
         out.push(...parseQuoteFetched(res.data, tokenToTicker));
       }
 
-      if (bi < batches.length - 1 && env.quoteBatchDelayMs > 0) {
+      if (
+        bi < batches.length - 1 &&
+        env.angelHttpMinGapMs <= 0 &&
+        env.quoteBatchDelayMs > 0
+      ) {
         await new Promise((r) => setTimeout(r, env.quoteBatchDelayMs));
       }
     }

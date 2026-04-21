@@ -96,7 +96,11 @@ export async function runDiscoverySync(
       scored++;
     }
 
-    if (i < symbols.length - 1 && env.discoverySymbolDelayMs > 0) {
+    if (
+      i < symbols.length - 1 &&
+      env.angelHttpMinGapMs <= 0 &&
+      env.discoverySymbolDelayMs > 0
+    ) {
       await sleep(env.discoverySymbolDelayMs);
     }
   }
