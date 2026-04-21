@@ -47,6 +47,10 @@ export interface TradeLogDoc extends Document {
   side?: "BUY" | "SELL";
   /** Fill price used as entry basis for exit PnL */
   entry_price?: number;
+  /** Position size in shares */
+  qty?: number;
+  /** ATR(14) at time of entry (for ATR-based exits) */
+  atr_at_entry?: number;
   /** True when an order was executed; false for logged non-entry decisions */
   order_executed?: boolean;
   exit_time?: Date;

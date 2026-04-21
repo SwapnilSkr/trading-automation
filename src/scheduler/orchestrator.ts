@@ -1,6 +1,7 @@
 import type { BrokerClient } from "../broker/types.js";
 import {
   ensureIndexes,
+  fetchLessonForDate,
   fetchOhlcRange,
   getSessionWatchlist,
 } from "../db/repositories.js";
@@ -28,6 +29,8 @@ export class TradingOrchestrator {
   private lastExecSyncAtMs = 0;
   private execSyncRunning = false;
   private tickerResyncLastAtMs = new Map<string, number>();
+  /** Loaded once when EXECUTION phase starts each day */
+  private sessionInitDoneForDay?: string;
 
   constructor(private broker: BrokerClient) {
     this.engine = new ExecutionEngine(broker);
@@ -84,6 +87,21 @@ export class TradingOrchestrator {
         break;
       }
       case "EXECUTION": {
+        // One-time session init: load strategy health + yesterday's lessons
+        const todayStr = istDateString(nowIST());
+        if (this.sessionInitDoneForDay !== todayStr) {
+          this.sessionInitDoneForDay = todayStr;
+          await this.engine.refreshStrategyHealth();
+          if (env.lessonsFeedbackEnabled) {
+            const yesterday = istDateString(nowIST().minus({ days: 1 }));
+            const lesson = await fetchLessonForDate(yesterday);
+            this.engine.setYesterdaysLessons(lesson?.summary);
+            if (lesson) {
+              console.log("[Orchestrator] loaded yesterday's lessons for judge context");
+            }
+          }
+        }
+
         const news = await fetchTodayNewsContext();
         const niftyTrend = await fetchNiftyTrendContext(this.broker);
         const day = nowIST().startOf("day").toJSDate();

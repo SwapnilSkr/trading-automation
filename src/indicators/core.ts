@@ -51,6 +51,23 @@ export function rsiSeries(period: number, candles: Ohlc1m[]): (number | undefine
   return out;
 }
 
+/** Average True Range — standard volatility measure using true range */
+export function atr(period: number, candles: Ohlc1m[]): number | undefined {
+  if (candles.length < period + 1) return undefined;
+  const trs: number[] = [];
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const c = candles[i]!;
+    const prevClose = candles[i - 1]!.c;
+    const tr = Math.max(
+      c.h - c.l,
+      Math.abs(c.h - prevClose),
+      Math.abs(c.l - prevClose)
+    );
+    trs.push(tr);
+  }
+  return trs.reduce((a, b) => a + b, 0) / trs.length;
+}
+
 /** Population stdev of closes over window */
 export function stdevCloses(candles: Ohlc1m[], window: number): number | undefined {
   if (candles.length < window) return undefined;

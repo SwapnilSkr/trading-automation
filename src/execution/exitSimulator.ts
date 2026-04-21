@@ -5,6 +5,7 @@ import {
   computeIntradayCharges,
   type BacktestRealismConfig,
 } from "../backtest/microstructure.js";
+import { env } from "../config/env.js";
 
 export interface SimPosition {
   ticker: string;
@@ -16,6 +17,8 @@ export interface SimPosition {
   entryTime: Date;
   /** Tracks the best price reached (for trailing stop) */
   peakPrice: number;
+  /** ATR at time of entry for dynamic exits */
+  atrAtEntry?: number;
   /** The partial trade doc — filled with exit info on close */
   doc: TradeLogDoc;
 }
@@ -47,16 +50,31 @@ export function checkExitOnBar(
   const { stopPct, targetPct, trailTriggerPct, trailDistPct } = params;
   let peak = pos.peakPrice;
 
+  // ATR-based exits: use ATR at entry if available, else fall back to fixed %
+  const useAtr = env.atrExitsEnabled && pos.atrAtEntry !== undefined && pos.atrAtEntry > 0;
+  const stopDist = useAtr
+    ? pos.atrAtEntry! * env.atrStopMultiple
+    : pos.entryPrice * stopPct;
+  const targetDist = useAtr
+    ? pos.atrAtEntry! * env.atrTargetMultiple
+    : pos.entryPrice * targetPct;
+  const trailTriggerDist = useAtr
+    ? pos.atrAtEntry! * env.atrTrailTriggerMultiple
+    : pos.entryPrice * trailTriggerPct;
+
   if (pos.side === "BUY") {
     // Update peak
     if (bar.h > peak) peak = bar.h;
 
-    const stopPrice = pos.entryPrice * (1 - stopPct);
-    const targetPrice = pos.entryPrice * (1 + targetPct);
+    const trailDistAbs = useAtr
+      ? pos.atrAtEntry! * env.atrTrailDistMultiple
+      : peak * trailDistPct;
+    const stopPrice = pos.entryPrice - stopDist;
+    const targetPrice = pos.entryPrice + targetDist;
 
-    // Trailing stop: kicks in once we've moved trailTriggerPct above entry
-    const trailActive = peak >= pos.entryPrice * (1 + trailTriggerPct);
-    const trailStop = trailActive ? peak * (1 - trailDistPct) : 0;
+    // Trailing stop: kicks in once we've moved trailTriggerDist above entry
+    const trailActive = peak >= pos.entryPrice + trailTriggerDist;
+    const trailStop = trailActive ? peak - trailDistAbs : 0;
     const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
 
     const targetHit = bar.h >= targetPrice;
@@ -84,11 +102,14 @@ export function checkExitOnBar(
     // SELL (short)
     if (bar.l < peak) peak = bar.l;
 
-    const stopPrice = pos.entryPrice * (1 + stopPct);
-    const targetPrice = pos.entryPrice * (1 - targetPct);
+    const trailDistAbs = useAtr
+      ? pos.atrAtEntry! * env.atrTrailDistMultiple
+      : peak * trailDistPct;
+    const stopPrice = pos.entryPrice + stopDist;
+    const targetPrice = pos.entryPrice - targetDist;
 
-    const trailActive = peak <= pos.entryPrice * (1 - trailTriggerPct);
-    const trailStop = trailActive ? peak * (1 + trailDistPct) : Infinity;
+    const trailActive = peak <= pos.entryPrice - trailTriggerDist;
+    const trailStop = trailActive ? peak + trailDistAbs : Infinity;
     const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
 
     const targetHit = bar.l <= targetPrice;

@@ -181,6 +181,39 @@ export async function tradesForDay(istDate: string): Promise<TradeLogDoc[]> {
     .toArray();
 }
 
+/**
+ * Fetch last N executed trades for a given strategy (most recent first).
+ * Used by strategy auto-gate to compute rolling performance.
+ */
+export async function fetchRecentTradesByStrategy(
+  strategy: string,
+  limit: number,
+  executionEnv?: "PAPER" | "LIVE"
+): Promise<TradeLogDoc[]> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const filter: Record<string, unknown> = {
+    strategy,
+    order_executed: true,
+    "result.outcome": { $exists: true },
+  };
+  if (executionEnv) filter.env = executionEnv;
+  return c
+    .find(filter)
+    .sort({ entry_time: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+/**
+ * Fetch yesterday's lesson from lessons_learned collection.
+ */
+export async function fetchLessonForDate(
+  istDate: string
+): Promise<LessonLearnedDoc | null> {
+  const c = await col<LessonLearnedDoc>(collections.lessons);
+  return c.findOne({ date: istDate });
+}
+
 export async function upsertLesson(doc: LessonLearnedDoc): Promise<void> {
   const c = await col<LessonLearnedDoc>(collections.lessons);
   await c.updateOne(

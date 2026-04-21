@@ -3,10 +3,19 @@ import { env } from "../config/env.js";
 export interface JudgeInput {
   strategy: string;
   ticker: string;
+  side?: string;
   triggerHint: string;
   niftyContext?: string;
   newsHeadlines?: string[];
   similarPatternsSummary?: string;
+  /** Last N candles formatted as table for price context */
+  priceContext?: string;
+  /** Indicator summary (RSI, ATR, VWAP dist, EMAs) */
+  indicators?: string;
+  /** Rolling strategy track record */
+  strategyTrackRecord?: string;
+  /** Yesterday's lessons from analyst post-mortem */
+  yesterdaysLessons?: string;
 }
 
 export interface JudgeResult {
@@ -98,21 +107,46 @@ export async function callJudgeModel(
 ): Promise<JudgeResult> {
   const key = env.openRouterApiKey();
   const model = options?.model ?? env.judgeModel;
-  const system = `You are a risk-aware intraday trading judge for Indian equities.
+  const system = `You are a risk-aware intraday trading judge for Indian equities (NSE).
+Evaluate setup quality, risk/reward ratio, and market context alignment.
+Approve high-probability setups with favorable R:R. Deny weak setups, counter-trend trades in strong trends, or setups with negative catalyst risk.
 Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasoning":"string"}`;
 
-  const user = [
-    `Strategy: ${input.strategy}`,
-    `Ticker: ${input.ticker}`,
+  const sections: string[] = [
+    `[SIGNAL]`,
+    `Strategy: ${input.strategy} | Ticker: ${input.ticker}${input.side ? ` | Side: ${input.side}` : ""}`,
     `Setup: ${input.triggerHint}`,
-    input.niftyContext ? `Nifty: ${input.niftyContext}` : "",
-    input.newsHeadlines?.length
-      ? `News: ${input.newsHeadlines.slice(0, 5).join(" | ")}`
-      : "",
-    input.similarPatternsSummary ? `History: ${input.similarPatternsSummary}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (input.priceContext) {
+    sections.push(`\n[PRICE ACTION]`, input.priceContext);
+  }
+
+  if (input.indicators) {
+    sections.push(`\n[INDICATORS]`, input.indicators);
+  }
+
+  if (input.similarPatternsSummary) {
+    sections.push(`\n[PATTERN MEMORY]`, input.similarPatternsSummary);
+  }
+
+  if (input.strategyTrackRecord) {
+    sections.push(`\n[STRATEGY TRACK RECORD]`, input.strategyTrackRecord);
+  }
+
+  if (input.niftyContext) {
+    sections.push(`\n[MARKET CONTEXT]`, `Nifty: ${input.niftyContext}`);
+  }
+
+  if (input.newsHeadlines?.length) {
+    sections.push(`News: ${input.newsHeadlines.slice(0, 5).join(" | ")}`);
+  }
+
+  if (input.yesterdaysLessons) {
+    sections.push(`\n[YESTERDAY'S LESSONS]`, input.yesterdaysLessons);
+  }
+
+  const user = sections.join("\n");
 
   if (!key) {
     return {
@@ -140,7 +174,7 @@ Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasonin
             { role: "user", content: user },
           ],
           temperature: 0.2,
-          max_tokens: 400,
+          max_tokens: 600,
           response_format: { type: "json_object" },
         }),
       });

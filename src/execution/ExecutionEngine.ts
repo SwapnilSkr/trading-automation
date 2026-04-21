@@ -20,6 +20,7 @@ import {
   insertTrade,
   updateTradeExit,
 } from "../db/repositories.js";
+import { atr as computeAtr, rsi, vwap, volumeZScore } from "../indicators/core.js";
 import {
   evaluateEma20BreakRetest,
   evaluateBigBoy,
@@ -39,6 +40,12 @@ import {
 } from "../strategies/triggers.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
 import { checkSafety, createSafetyState, type SafetyState } from "./safety.js";
+import {
+  loadStrategyHealth,
+  isStrategyAllowed,
+  getStrategyTrackRecord,
+  type StrategyHealth,
+} from "./strategyTracker.js";
 import { DateTime } from "luxon";
 import { IST, nowIST } from "../time/ist.js";
 import type { ObjectId } from "mongodb";
@@ -73,6 +80,8 @@ interface LivePosition {
   peakPrice: number;
   strategy: string;
   tradeId?: ObjectId;
+  qty: number;
+  atrAtEntry?: number;
 }
 
 export class ExecutionEngine {
@@ -82,8 +91,55 @@ export class ExecutionEngine {
   private lastJudgeByStrategyTicker = new Map<string, number>();
   /** Live paper positions tracked for stop/target management */
   private livePositions = new Map<string, LivePosition>();
+  /** Rolling strategy performance (loaded once per session start) */
+  private strategyHealthMap = new Map<StrategyId, StrategyHealth>();
+  /** Yesterday's lessons for judge context */
+  private yesterdaysLessons?: string;
 
   constructor(private broker: BrokerClient) {}
+
+  /** Load strategy health from recent trades (call once at session start) */
+  async refreshStrategyHealth(): Promise<void> {
+    if (!env.strategyAutoGateEnabled) return;
+    this.strategyHealthMap = await loadStrategyHealth();
+    const disabled = [...this.strategyHealthMap.values()].filter((h) => !h.allowed);
+    if (disabled.length > 0) {
+      for (const h of disabled) {
+        console.log(
+          `[Strategy Gate] ${h.strategy} DISABLED: ${h.reason} (${h.trades} trades)`
+        );
+      }
+    }
+  }
+
+  /** Set yesterday's lessons for judge context injection */
+  setYesterdaysLessons(lessons: string | undefined): void {
+    this.yesterdaysLessons = lessons;
+  }
+
+  /**
+   * Compute position size based on ATR and confidence.
+   * Risk a fixed % of equity per trade, scaled by judge confidence.
+   */
+  private computeQty(
+    entryPrice: number,
+    atrValue: number | undefined,
+    confidence: number
+  ): number {
+    if (!env.atrSizingEnabled || !atrValue || atrValue <= 0) {
+      return env.backtestPositionQty;
+    }
+    const riskPerTrade = env.accountEquity * env.riskPerTradePct;
+    const stopDistance = atrValue * env.atrStopMultiple;
+    if (stopDistance <= 0) return env.minQtyPerTrade;
+    const baseQty = Math.floor(riskPerTrade / stopDistance);
+    const confMultiplier = Math.max(
+      0.5,
+      Math.min(2.0, 0.5 + confidence * env.confidenceScaleFactor)
+    );
+    const qty = Math.floor(baseQty * confMultiplier);
+    return Math.max(env.minQtyPerTrade, Math.min(env.maxQtyPerTrade, qty));
+  }
 
   recordPnl(delta: number): void {
     this.safety.dailyPnl += delta;
@@ -114,6 +170,8 @@ export class ExecutionEngine {
         peakPrice: t.entry_price,
         strategy: t.strategy,
         tradeId: t._id,
+        qty: t.qty ?? 1,
+        atrAtEntry: t.atr_at_entry,
       });
       restored++;
     }
@@ -140,28 +198,38 @@ export class ExecutionEngine {
     if (pos.side === "BUY" && bar.h > pos.peakPrice) pos.peakPrice = bar.h;
     if (pos.side === "SELL" && bar.l < pos.peakPrice) pos.peakPrice = bar.l;
 
-    const stopPct = env.exitStopPct;
-    const targetPct = env.exitTargetPct;
-    const trailTriggerPct = env.exitTrailTriggerPct;
-    const trailDistPct = env.exitTrailDistPct;
+    // ATR-based exits: use ATR at entry if available, else fall back to fixed %
+    const useAtr = env.atrExitsEnabled && pos.atrAtEntry !== undefined && pos.atrAtEntry > 0;
+    const stopDist = useAtr
+      ? pos.atrAtEntry! * env.atrStopMultiple
+      : pos.entryPrice * env.exitStopPct;
+    const targetDist = useAtr
+      ? pos.atrAtEntry! * env.atrTargetMultiple
+      : pos.entryPrice * env.exitTargetPct;
+    const trailTriggerDist = useAtr
+      ? pos.atrAtEntry! * env.atrTrailTriggerMultiple
+      : pos.entryPrice * env.exitTrailTriggerPct;
+    const trailDistAbs = useAtr
+      ? pos.atrAtEntry! * env.atrTrailDistMultiple
+      : pos.peakPrice * env.exitTrailDistPct;
 
     let shouldExit = false;
     let exitReason = "";
 
     if (pos.side === "BUY") {
-      const stopPrice = pos.entryPrice * (1 - stopPct);
-      const targetPrice = pos.entryPrice * (1 + targetPct);
-      const trailActive = pos.peakPrice >= pos.entryPrice * (1 + trailTriggerPct);
-      const trailStop = trailActive ? pos.peakPrice * (1 - trailDistPct) : 0;
+      const stopPrice = pos.entryPrice - stopDist;
+      const targetPrice = pos.entryPrice + targetDist;
+      const trailActive = pos.peakPrice >= pos.entryPrice + trailTriggerDist;
+      const trailStop = trailActive ? pos.peakPrice - trailDistAbs : 0;
       const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
 
       if (bar.c >= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
       else if (bar.c <= effectiveStop) { shouldExit = true; exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`; }
     } else {
-      const stopPrice = pos.entryPrice * (1 + stopPct);
-      const targetPrice = pos.entryPrice * (1 - targetPct);
-      const trailActive = pos.peakPrice <= pos.entryPrice * (1 - trailTriggerPct);
-      const trailStop = trailActive ? pos.peakPrice * (1 + trailDistPct) : Infinity;
+      const stopPrice = pos.entryPrice + stopDist;
+      const targetPrice = pos.entryPrice - targetDist;
+      const trailActive = pos.peakPrice <= pos.entryPrice - trailTriggerDist;
+      const trailStop = trailActive ? pos.peakPrice + trailDistAbs : Infinity;
       const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
 
       if (bar.c <= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
@@ -220,6 +288,8 @@ export class ExecutionEngine {
       peakPrice: t.entry_price,
       strategy: t.strategy,
       tradeId: t._id,
+      qty: t.qty ?? 1,
+      atrAtEntry: t.atr_at_entry,
     };
     const result = this.liveResultFromExit(pos, exitPrice);
     this.recordPnl(result.pnl);
@@ -322,7 +392,21 @@ export class ExecutionEngine {
       if (pdRetest) triggers.push(pdRetest);
     }
 
-    const gatedTriggers = applyVolRegimeGating(triggers, sessionCandles);
+    const volGated = applyVolRegimeGating(triggers, sessionCandles);
+
+    // Strategy auto-gate: filter out strategies with poor rolling performance
+    const gatedTriggers = !backtest
+      ? volGated.filter((t) => {
+          const allowed = isStrategyAllowed(t.strategy, this.strategyHealthMap);
+          if (!allowed && env.liveDebugScans) {
+            const h = this.strategyHealthMap.get(t.strategy);
+            console.log(
+              `[Strategy Gate] ${ticker} ${t.strategy} blocked: ${h?.reason ?? "unknown"}`
+            );
+          }
+          return allowed;
+        })
+      : volGated;
 
     if (!backtest && env.liveDebugScans) {
       if (triggers.length === 0) {
@@ -331,7 +415,7 @@ export class ExecutionEngine {
         );
       } else {
         console.log(
-          `[Scan] ${ticker} triggers=${triggers.length} gated=${gatedTriggers.length} [${gatedTriggers.map((t) => `${t.strategy}:${t.side}`).join(", ")}]`
+          `[Scan] ${ticker} triggers=${triggers.length} volGated=${volGated.length} stratGated=${gatedTriggers.length} [${gatedTriggers.map((t) => `${t.strategy}:${t.side}`).join(", ")}]`
         );
       }
     }
@@ -379,42 +463,45 @@ export class ExecutionEngine {
         : rawNeighbors;
     const mem = scoreFromNeighbors(neighbors, 0.72);
 
-    let judgeInput: JudgeInput = {
+    // Build enriched price context for judge
+    const priceContext = buildPriceContext(ctx.sessionCandles);
+    const indicators = buildIndicators(ctx.sessionCandles);
+    const strategyRecord = getStrategyTrackRecord(
+      hit.strategy,
+      this.strategyHealthMap
+    );
+
+    // Build pattern memory summary
+    let patternSummary: string | undefined;
+    if (mem.useMemory) {
+      const strongNeighbors = neighbors.filter((n) => n.score >= 0.72);
+      const avgPnl = strongNeighbors.length > 0
+        ? strongNeighbors.reduce((s, n) => s + n.meta.pnl_percent, 0) / strongNeighbors.length
+        : 0;
+      patternSummary = `Similar patterns: ${strongNeighbors.length} found | Win rate: ${(mem.pWin * 100).toFixed(0)}% | Avg PnL: ${avgPnl > 0 ? "+" : ""}${avgPnl.toFixed(1)}%`;
+      if (neighbors[0]) {
+        patternSummary += `\nBest match: score=${neighbors[0].score.toFixed(3)}, outcome=${neighbors[0].meta.outcome}, pnl=${neighbors[0].meta.pnl_percent > 0 ? "+" : ""}${neighbors[0].meta.pnl_percent.toFixed(1)}%`;
+      }
+    } else if (neighbors.length > 0 && hit.strategy === "BIG_BOY_SWEEP") {
+      patternSummary = neighbors
+        .slice(0, 3)
+        .map((n) => `${n.meta.outcome} ${n.meta.pnl_percent}% @ ${n.meta.date}`)
+        .join("; ");
+    }
+
+    const judgeInput: JudgeInput = {
       strategy: hit.strategy,
       ticker,
+      side: hit.side,
       triggerHint: hit.hint,
       niftyContext: ctx.niftyTrendHint,
       newsHeadlines: ctx.newsHeadlines,
+      similarPatternsSummary: patternSummary,
+      priceContext,
+      indicators,
+      strategyTrackRecord: strategyRecord,
+      yesterdaysLessons: this.yesterdaysLessons,
     };
-
-    if (hit.strategy === "ORB_15M") {
-      judgeInput = {
-        ...judgeInput,
-        similarPatternsSummary: mem.useMemory
-          ? `Memory: ~${(mem.pWin * 100).toFixed(0)}% win in similar setups`
-          : undefined,
-      };
-    } else if (hit.strategy === "BIG_BOY_SWEEP") {
-      judgeInput = {
-        ...judgeInput,
-        similarPatternsSummary: neighbors.length
-          ? neighbors
-              .slice(0, 3)
-              .map(
-                (n) =>
-                  `${n.meta.outcome} ${n.meta.pnl_percent}% @ ${n.meta.date}`
-              )
-              .join("; ")
-          : "No close historical fakeouts indexed",
-      };
-    } else {
-      judgeInput = {
-        ...judgeInput,
-        similarPatternsSummary: mem.useMemory
-          ? `Z-score regime memory pWin~${mem.pWin.toFixed(2)}`
-          : undefined,
-      };
-    }
 
     const judgeModel =
       backtest?.judgeModel ??
@@ -498,6 +585,10 @@ export class ExecutionEngine {
     const entryPrice =
       ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
 
+    // Compute ATR for position sizing and dynamic exits
+    const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
+    const qty = this.computeQty(entryPrice, atrValue, judge.confidence);
+
     const doOrder =
       judge.approve &&
       checkSafety(this.safety, this.openCount) &&
@@ -508,15 +599,17 @@ export class ExecutionEngine {
       doc.order_executed = true;
       doc.side = side;
       doc.entry_price = entryPrice;
+      doc.qty = qty;
+      doc.atr_at_entry = atrValue;
       await this.broker.placePaperOrder({
         ticker,
         side,
-        qty: 1,
+        qty,
         strategy: hit.strategy,
       });
       if (!backtest && env.liveDebugScans) {
         console.log(
-          `[Entry] ${ticker} ${hit.strategy} ${side} @ ${entryPrice.toFixed(2)}`
+          `[Entry] ${ticker} ${hit.strategy} ${side} qty=${qty} @ ${entryPrice.toFixed(2)} ATR=${atrValue?.toFixed(2) ?? "n/a"}`
         );
       }
       this.openCount += 1;
@@ -532,6 +625,8 @@ export class ExecutionEngine {
           peakPrice: entryPrice,
           strategy: hit.strategy,
           tradeId,
+          qty,
+          atrAtEntry: atrValue,
         });
       }
     }
@@ -557,11 +652,12 @@ export class ExecutionEngine {
     pos: LivePosition,
     exitPrice: number
   ): NonNullable<TradeLogDoc["result"]> {
-    const pnlRaw =
+    const pnlPerShare =
       pos.side === "BUY" ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice;
+    const pnlRaw = pnlPerShare * pos.qty;
     const pnl = parseFloat(pnlRaw.toFixed(2));
     const pctBase = Math.max(1e-9, pos.entryPrice);
-    const pnlPercent = (pnlRaw / pctBase) * 100;
+    const pnlPercent = (pnlPerShare / pctBase) * 100;
     const outcome =
       pnlPercent > 0.1 ? "WIN" : pnlPercent < -0.1 ? "LOSS" : "BREAKEVEN";
     return {
@@ -675,4 +771,37 @@ function filterCausalNeighborsForBacktest(
     if (!d.isValid) return false;
     return d.startOf("day") < simDay;
   });
+}
+
+/** Build last 5 candles as a tabular string for the judge prompt */
+function buildPriceContext(candles: Ohlc1m[]): string | undefined {
+  if (candles.length < 5) return undefined;
+  const last5 = candles.slice(-5);
+  const lines = last5.map((c) => {
+    const t = DateTime.fromJSDate(c.ts, { zone: IST });
+    return `${t.toFormat("HH:mm")}  ${c.o.toFixed(1)}  ${c.h.toFixed(1)}  ${c.l.toFixed(1)}  ${c.c.toFixed(1)}  ${c.v}`;
+  });
+  return `Time   O       H       L       C       Vol\n${lines.join("\n")}`;
+}
+
+/** Build indicator summary string for the judge prompt */
+function buildIndicators(candles: Ohlc1m[]): string | undefined {
+  if (candles.length < 20) return undefined;
+  const parts: string[] = [];
+
+  const rsiVal = rsi(14, candles);
+  if (rsiVal !== undefined) parts.push(`RSI(14): ${rsiVal.toFixed(1)}`);
+
+  const atrVal = computeAtr(14, candles);
+  if (atrVal !== undefined) parts.push(`ATR(14): ₹${atrVal.toFixed(2)}`);
+
+  const vwapVal = vwap(candles);
+  const lastClose = candles[candles.length - 1]!.c;
+  const vwapDist = ((lastClose - vwapVal) / vwapVal) * 100;
+  parts.push(`VWAP: ${vwapVal.toFixed(1)} (price ${vwapDist >= 0 ? "+" : ""}${vwapDist.toFixed(2)}% ${vwapDist >= 0 ? "above" : "below"})`);
+
+  const volZ = volumeZScore(candles, 20);
+  if (volZ !== undefined) parts.push(`Vol Z: ${volZ.toFixed(1)}`);
+
+  return parts.join(" | ");
 }
