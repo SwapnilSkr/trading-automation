@@ -331,6 +331,13 @@ bun run analyst
 ```
 Use this terminal for on-demand reports and post-mortem runs.
 
+**What gets counted**
+
+- **`live-analyze`** — Loads all `trades` whose `entry_time` falls on the chosen **IST calendar day** (default: today). **PnL, win rate, and strategy/ticker breakdowns include only rows where `order_executed` is not `false`** (real entries after the judge + safety path). Rows where the judge rejected the signal (`order_executed: false`) are **omitted** from those stats; if nothing executed, it prints how many decision-only rows were skipped.
+- **`analyst`** — Uses the **same executed-trade filter** for metrics and for the two post-mortem judge prompts. It **always upserts** Mongo **`lessons_learned`** for that IST date (one document per day, keyed by `date`), including metrics and a short trade list—even when there were **zero** executed trades that day.
+
+**Restarts** — The live daemon can restart any time; these commands only read **what is already stored in Mongo for that day**. They do not depend on process uptime, PM2 session, or a single continuous run.
+
 If you edit `.env` or code later:
 ```bash
 pm2 restart ecosystem.config.cjs --update-env

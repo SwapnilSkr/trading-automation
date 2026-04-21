@@ -1,6 +1,10 @@
 /**
  * Evening post-mortem entrypoint (PM2 cron recommended).
  * Two focused judge calls: winners (incl. breakeven + open) vs losers.
+ *
+ * Reads `trades` for today’s IST date from Mongo (same data whether the daemon restarted or not).
+ * Metrics and prompts use executed entries only (`order_executed !== false`).
+ * Always upserts `lessons_learned` for that date (even if there were no executed trades).
  */
 import "dotenv/config";
 import { callJudgeModel } from "./ai/judge.js";

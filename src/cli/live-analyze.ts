@@ -2,6 +2,8 @@
  * bun run live-analyze [-- --date YYYY-MM-DD]
  *
  * Analyze live/paper `trades` for an IST date (default: today IST).
+ * Queries Mongo by `entry_time` for that calendar day (daemon restarts are irrelevant).
+ * Stats include only executed entries (`order_executed !== false`); rejected-judge rows are excluded.
  */
 import "dotenv/config";
 import { DateTime } from "luxon";
@@ -120,11 +122,16 @@ async function main(): Promise<void> {
   const executed = trades.filter((t) => t.order_executed !== false);
 
   console.log(`\n[live-analyze] Date: ${dayStr} (IST)`);
+  console.log(
+    "  Counts below: executed entries only (order_executed !== false); judge-rejected rows excluded."
+  );
   if (executed.length === 0) {
-    console.log("  No live/paper trades for this date.");
+    console.log("  No executed live/paper trades for this date.");
     const nonEntries = trades.filter((t) => t.order_executed === false).length;
     if (nonEntries > 0) {
-      console.log(`  Note: ${nonEntries} non-entry decision logs found.`);
+      console.log(
+        `  Note: ${nonEntries} decision-only row(s) in DB (order_executed: false) — not in stats.`
+      );
     }
     return;
   }
