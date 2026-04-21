@@ -27,6 +27,10 @@ export async function ensureIndexes(): Promise<void> {
   const trades = await col<TradeLogDoc>(collections.trades);
   await trades.createIndex({ entry_time: -1 });
   await trades.createIndex({ ticker: 1, strategy: 1 });
+  await trades.createIndex(
+    { strategy: 1, env: 1, order_executed: 1, entry_time: -1 },
+    { partialFilterExpression: { "result.outcome": { $exists: true } } }
+  );
 
   const lessons = await col<LessonLearnedDoc>(collections.lessons);
   await lessons.createIndex({ date: -1 }, { unique: true });

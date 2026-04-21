@@ -84,6 +84,13 @@ interface LivePosition {
   atrAtEntry?: number;
 }
 
+interface Layer1Decision {
+  pass: boolean;
+  reasons: string[];
+  atrPct?: number;
+  volumeZ?: number;
+}
+
 export class ExecutionEngine {
   private safety: SafetyState = createSafetyState();
   private openCount = 0;
@@ -455,13 +462,12 @@ export class ExecutionEngine {
       return;
     }
 
-    const vector = await embedCandlePattern(ctx.sessionCandles);
-    const rawNeighbors = await querySimilarPatterns(vector, 8);
-    const neighbors =
-      backtest?.simulatedAt !== undefined
-        ? filterCausalNeighborsForBacktest(rawNeighbors, backtest.simulatedAt)
-        : rawNeighbors;
-    const mem = scoreFromNeighbors(neighbors, 0.72);
+    const entryPrice =
+      ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
+    const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
+    const volZValue = volumeZScore(ctx.sessionCandles, 20);
+    const layer1 = evaluateLayer1Decision(entryPrice, atrValue, volZValue);
+    const enforceLayer1 = env.shadowEvalEnforceLayer1 && !backtest;
 
     // Build enriched price context for judge
     const priceContext = buildPriceContext(ctx.sessionCandles);
@@ -471,72 +477,97 @@ export class ExecutionEngine {
       this.strategyHealthMap
     );
 
-    // Build pattern memory summary
-    let patternSummary: string | undefined;
-    if (mem.useMemory) {
-      const strongNeighbors = neighbors.filter((n) => n.score >= 0.72);
-      const avgPnl = strongNeighbors.length > 0
-        ? strongNeighbors.reduce((s, n) => s + n.meta.pnl_percent, 0) / strongNeighbors.length
-        : 0;
-      patternSummary = `Similar patterns: ${strongNeighbors.length} found | Win rate: ${(mem.pWin * 100).toFixed(0)}% | Avg PnL: ${avgPnl > 0 ? "+" : ""}${avgPnl.toFixed(1)}%`;
-      if (neighbors[0]) {
-        patternSummary += `\nBest match: score=${neighbors[0].score.toFixed(3)}, outcome=${neighbors[0].meta.outcome}, pnl=${neighbors[0].meta.pnl_percent > 0 ? "+" : ""}${neighbors[0].meta.pnl_percent.toFixed(1)}%`;
-      }
-    } else if (neighbors.length > 0 && hit.strategy === "BIG_BOY_SWEEP") {
-      patternSummary = neighbors
-        .slice(0, 3)
-        .map((n) => `${n.meta.outcome} ${n.meta.pnl_percent}% @ ${n.meta.date}`)
-        .join("; ");
-    }
-
-    const judgeInput: JudgeInput = {
-      strategy: hit.strategy,
-      ticker,
-      side: hit.side,
-      triggerHint: hit.hint,
-      niftyContext: ctx.niftyTrendHint,
-      newsHeadlines: ctx.newsHeadlines,
-      similarPatternsSummary: patternSummary,
-      priceContext,
-      indicators,
-      strategyTrackRecord: strategyRecord,
-      yesterdaysLessons: this.yesterdaysLessons,
-    };
-
-    const judgeModel =
-      backtest?.judgeModel ??
-      (backtest ? env.judgeModelBacktest : undefined);
-
-    const top = neighbors[0];
-    const pineconeGate =
-      !backtest &&
-      env.pineconeGateEnabled &&
-      top !== undefined &&
-      top.score >= env.pineconeGateMinScore &&
-      top.meta.outcome === "WIN";
-
-    const skipJudgeMode =
-      backtest?.skipJudge === true || (!backtest && env.liveSkipJudge);
-
     let judge: JudgeResult;
-    if (skipJudgeMode) {
+    let decisionVia:
+      | "skip-judge"
+      | "pinecone-gate"
+      | "llm-judge"
+      | "layer1-veto";
+    let patternSummary: string | undefined;
+    if (enforceLayer1 && !layer1.pass) {
       judge = {
-        approve: true,
-        confidence: 0.5,
-        reasoning: backtest?.skipJudge
-          ? "skipJudge: technical trigger auto-approved (LLM bypassed)"
-          : "LIVE_SKIP_JUDGE: technical trigger auto-approved (LLM bypassed)",
+        approve: false,
+        confidence: 0,
+        reasoning: `LAYER1_VETO: ${layer1.reasons.join("; ")}`,
       };
-    } else if (pineconeGate) {
-      judge = {
-        approve: true,
-        confidence: Math.min(0.99, top.score),
-        reasoning: `PINECONE_MATCH id=${top.id} score=${top.score.toFixed(
-          4
-        )} outcome=${top.meta.outcome}`,
-      };
+      decisionVia = "layer1-veto";
     } else {
-      judge = await callJudgeModel(judgeInput, { model: judgeModel });
+      const vector = await embedCandlePattern(ctx.sessionCandles);
+      const rawNeighbors = await querySimilarPatterns(vector, 8);
+      const neighbors =
+        backtest?.simulatedAt !== undefined
+          ? filterCausalNeighborsForBacktest(rawNeighbors, backtest.simulatedAt)
+          : rawNeighbors;
+      const mem = scoreFromNeighbors(neighbors, 0.72);
+
+      // Build pattern memory summary
+      if (mem.useMemory) {
+        const strongNeighbors = neighbors.filter((n) => n.score >= 0.72);
+        const avgPnl = strongNeighbors.length > 0
+          ? strongNeighbors.reduce((s, n) => s + n.meta.pnl_percent, 0) / strongNeighbors.length
+          : 0;
+        patternSummary = `Similar patterns: ${strongNeighbors.length} found | Win rate: ${(mem.pWin * 100).toFixed(0)}% | Avg PnL: ${avgPnl > 0 ? "+" : ""}${avgPnl.toFixed(1)}%`;
+        if (neighbors[0]) {
+          patternSummary += `\nBest match: score=${neighbors[0].score.toFixed(3)}, outcome=${neighbors[0].meta.outcome}, pnl=${neighbors[0].meta.pnl_percent > 0 ? "+" : ""}${neighbors[0].meta.pnl_percent.toFixed(1)}%`;
+        }
+      } else if (neighbors.length > 0 && hit.strategy === "BIG_BOY_SWEEP") {
+        patternSummary = neighbors
+          .slice(0, 3)
+          .map((n) => `${n.meta.outcome} ${n.meta.pnl_percent}% @ ${n.meta.date}`)
+          .join("; ");
+      }
+
+      const judgeInput: JudgeInput = {
+        strategy: hit.strategy,
+        ticker,
+        side: hit.side,
+        triggerHint: hit.hint,
+        niftyContext: ctx.niftyTrendHint,
+        newsHeadlines: ctx.newsHeadlines,
+        similarPatternsSummary: patternSummary,
+        priceContext,
+        indicators,
+        strategyTrackRecord: strategyRecord,
+        yesterdaysLessons: this.yesterdaysLessons,
+      };
+
+      const judgeModel =
+        backtest?.judgeModel ??
+        (backtest ? env.judgeModelBacktest : undefined);
+
+      const top = neighbors[0];
+      const pineconeGate =
+        !backtest &&
+        env.pineconeGateEnabled &&
+        top !== undefined &&
+        top.score >= env.pineconeGateMinScore &&
+        top.meta.outcome === "WIN";
+
+      const skipJudgeMode =
+        backtest?.skipJudge === true || (!backtest && env.liveSkipJudge);
+
+      if (skipJudgeMode) {
+        judge = {
+          approve: true,
+          confidence: 0.5,
+          reasoning: backtest?.skipJudge
+            ? "skipJudge: technical trigger auto-approved (LLM bypassed)"
+            : "LIVE_SKIP_JUDGE: technical trigger auto-approved (LLM bypassed)",
+        };
+        decisionVia = "skip-judge";
+      } else if (pineconeGate) {
+        judge = {
+          approve: true,
+          confidence: Math.min(0.99, top.score),
+          reasoning: `PINECONE_MATCH id=${top.id} score=${top.score.toFixed(
+            4
+          )} outcome=${top.meta.outcome}`,
+        };
+        decisionVia = "pinecone-gate";
+      } else {
+        judge = await callJudgeModel(judgeInput, { model: judgeModel });
+        decisionVia = "llm-judge";
+      }
     }
 
     if (!backtest) {
@@ -544,14 +575,13 @@ export class ExecutionEngine {
       this.lastJudgeByStrategyTicker.set(strategyTickerKey, nowMs);
     }
 
+    const finalDecision: "APPROVE" | "DENY" = judge.approve ? "APPROVE" : "DENY";
+    const counterfactualTwoLayerDecision: "APPROVE" | "DENY" =
+      layer1.pass && judge.approve ? "APPROVE" : "DENY";
+
     if (!backtest && env.liveDebugScans) {
-      const via = skipJudgeMode
-        ? "skip-judge"
-        : pineconeGate
-          ? "pinecone-gate"
-          : "llm-judge";
       console.log(
-        `[Decision] ${ticker} ${hit.strategy} ${hit.side} approve=${judge.approve} via=${via} conf=${judge.confidence.toFixed(2)} reason="${shortReason(judge.reasoning)}"`
+        `[Decision] ${ticker} ${hit.strategy} ${hit.side} approve=${judge.approve} via=${decisionVia} l1=${layer1.pass ? "PASS" : "BLOCK"} cf2=${counterfactualTwoLayerDecision} conf=${judge.confidence.toFixed(2)} reason="${shortReason(judge.reasoning)}"`
       );
     }
 
@@ -582,17 +612,37 @@ export class ExecutionEngine {
             : "BUY"
         : "BUY");
 
-    const entryPrice =
-      ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
-
-    // Compute ATR for position sizing and dynamic exits
-    const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
+    // Compute quantity once (entryPrice + ATR computed above)
     const qty = this.computeQty(entryPrice, atrValue, judge.confidence);
+
+    if (env.shadowEvalEnabled || env.shadowEvalEnforceLayer1) {
+      doc.shadow_eval = {
+        enabled: true,
+        layer1_decision: layer1.pass ? "PASS" : "BLOCK",
+        layer1_reasons: layer1.reasons.length > 0 ? layer1.reasons : undefined,
+        layer1_volume_z: layer1.volumeZ,
+        layer1_atr_pct: layer1.atrPct,
+        layer2_decision: judge.approve ? "APPROVE" : "DENY",
+        layer2_via: decisionVia,
+        final_decision: finalDecision,
+        counterfactual_two_layer_decision: counterfactualTwoLayerDecision,
+        disagreed: finalDecision !== counterfactualTwoLayerDecision,
+      };
+    }
 
     const doOrder =
       judge.approve &&
       checkSafety(this.safety, this.openCount) &&
       !backtest?.skipOrders;
+
+    if (judge.approve && backtest) {
+      // Backtest replay may bypass broker orders; still mark a complete executed entry.
+      doc.order_executed = true;
+      doc.side = side;
+      doc.entry_price = entryPrice;
+      doc.qty = qty;
+      doc.atr_at_entry = atrValue;
+    }
 
     let liveEntryPersisted = false;
     if (doOrder) {
@@ -672,6 +722,36 @@ export class ExecutionEngine {
 function shortReason(reason: string): string {
   const r = reason.replace(/\s+/g, " ").trim();
   return r.length <= 140 ? r : `${r.slice(0, 137)}...`;
+}
+
+function evaluateLayer1Decision(
+  entryPrice: number,
+  atrValue: number | undefined,
+  volumeZ: number | undefined
+): Layer1Decision {
+  const reasons: string[] = [];
+  const atrPct =
+    atrValue !== undefined && entryPrice > 0
+      ? (atrValue / entryPrice) * 100
+      : undefined;
+
+  if (volumeZ !== undefined && volumeZ < env.layer1MinVolumeZ) {
+    reasons.push(
+      `volume_z=${volumeZ.toFixed(2)}<${env.layer1MinVolumeZ.toFixed(2)}`
+    );
+  }
+  if (atrPct !== undefined && atrPct > env.layer1MaxAtrPct) {
+    reasons.push(
+      `atr_pct=${atrPct.toFixed(2)}>${env.layer1MaxAtrPct.toFixed(2)}`
+    );
+  }
+
+  return {
+    pass: reasons.length === 0,
+    reasons,
+    atrPct,
+    volumeZ,
+  };
 }
 
 type VolRegime = "LOW" | "MID" | "HIGH";

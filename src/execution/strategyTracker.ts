@@ -1,6 +1,6 @@
 import { env } from "../config/env.js";
 import { fetchRecentTradesByStrategy } from "../db/repositories.js";
-import type { StrategyId, TradeOutcome } from "../types/domain.js";
+import type { StrategyId } from "../types/domain.js";
 
 export interface StrategyHealth {
   strategy: StrategyId;
@@ -36,64 +36,72 @@ const ALL_STRATEGIES: StrategyId[] = [
  * Returns a map of strategy → health status.
  */
 export async function loadStrategyHealth(): Promise<Map<StrategyId, StrategyHealth>> {
-  const healthMap = new Map<StrategyId, StrategyHealth>();
   const window = env.strategyGateWindow;
+  const rows = await Promise.all(
+    ALL_STRATEGIES.map(async (strategy) => {
+      const trades = await fetchRecentTradesByStrategy(
+        strategy,
+        window,
+        env.executionEnv
+      );
+      const exits = trades.filter((t) => t.result?.outcome);
 
-  for (const strategy of ALL_STRATEGIES) {
-    const trades = await fetchRecentTradesByStrategy(strategy, window);
-    const exits = trades.filter((t) => t.result?.outcome);
+      let wins = 0;
+      let losses = 0;
+      let sumWin = 0;
+      let sumLoss = 0;
+      let totalPnl = 0;
 
-    let wins = 0;
-    let losses = 0;
-    let sumWin = 0;
-    let sumLoss = 0;
-    let totalPnl = 0;
-
-    for (const t of exits) {
-      const outcome = t.result!.outcome;
-      const pnl = t.result!.pnl;
-      totalPnl += pnl;
-      if (outcome === "WIN") {
-        wins++;
-        sumWin += pnl;
-      } else if (outcome === "LOSS") {
-        losses++;
-        sumLoss += Math.abs(pnl);
+      for (const t of exits) {
+        const outcome = t.result!.outcome;
+        const pnl = t.result!.pnl;
+        totalPnl += pnl;
+        if (outcome === "WIN") {
+          wins++;
+          sumWin += pnl;
+        } else if (outcome === "LOSS") {
+          losses++;
+          sumLoss += Math.abs(pnl);
+        }
       }
-    }
 
-    const tradeCount = exits.length;
-    const winRate = tradeCount > 0 ? wins / tradeCount : 0;
-    const profitFactor = sumLoss > 0 ? sumWin / sumLoss : sumWin > 0 ? Infinity : 0;
+      const tradeCount = exits.length;
+      const winRate = tradeCount > 0 ? wins / tradeCount : 0;
+      const profitFactor =
+        sumLoss > 0 ? sumWin / sumLoss : sumWin > 0 ? Infinity : 0;
 
-    // Need minimum trades before gating kicks in
-    const hasEnoughData = tradeCount >= 10;
-    const pfOk = !hasEnoughData || profitFactor >= env.strategyGateMinPf;
-    const wrOk = !hasEnoughData || winRate >= env.strategyGateMinWinRate;
-    const allowed = pfOk && wrOk;
+      // Need minimum trades before gating kicks in
+      const hasEnoughData = tradeCount >= 10;
+      const pfOk = !hasEnoughData || profitFactor >= env.strategyGateMinPf;
+      const wrOk = !hasEnoughData || winRate >= env.strategyGateMinWinRate;
+      const allowed = pfOk && wrOk;
 
-    let reason: string | undefined;
-    if (!allowed) {
-      const parts: string[] = [];
-      if (!pfOk) parts.push(`PF=${profitFactor.toFixed(2)}<${env.strategyGateMinPf}`);
-      if (!wrOk) parts.push(`WR=${(winRate * 100).toFixed(0)}%<${(env.strategyGateMinWinRate * 100).toFixed(0)}%`);
-      reason = parts.join(", ");
-    }
+      let reason: string | undefined;
+      if (!allowed) {
+        const parts: string[] = [];
+        if (!pfOk)
+          parts.push(`PF=${profitFactor.toFixed(2)}<${env.strategyGateMinPf}`);
+        if (!wrOk)
+          parts.push(
+            `WR=${(winRate * 100).toFixed(0)}%<${(env.strategyGateMinWinRate * 100).toFixed(0)}%`
+          );
+        reason = parts.join(", ");
+      }
 
-    healthMap.set(strategy, {
-      strategy,
-      trades: tradeCount,
-      wins,
-      losses,
-      winRate,
-      profitFactor,
-      totalPnl,
-      allowed,
-      reason,
-    });
-  }
-
-  return healthMap;
+      return {
+        strategy,
+        trades: tradeCount,
+        wins,
+        losses,
+        winRate,
+        profitFactor,
+        totalPnl,
+        allowed,
+        reason,
+      } as StrategyHealth;
+    })
+  );
+  return new Map(rows.map((r) => [r.strategy, r] as const));
 }
 
 /**

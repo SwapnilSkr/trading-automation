@@ -49,6 +49,10 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
 | `LIVE_DEBUG_SCANS` | `true` | Print per-ticker scan/decision logs in EXECUTION mode (very useful for understanding why trades fire or don't) |
+| `SHADOW_EVAL_ENABLED` | `false` | Log layer-1/layer-2/final/counterfactual decisions into `trades.shadow_eval` (observe-only mode) |
+| `SHADOW_EVAL_ENFORCE_LAYER1` | `false` | If `true`, layer-1 veto is enforced before Pinecone/LLM (start with `false`) |
+| `LAYER1_MIN_VOLUME_Z` | `-0.8` | Layer-1 block threshold: `volume_z < this` |
+| `LAYER1_MAX_ATR_PCT` | `3.5` | Layer-1 block threshold: `ATR(14)/price × 100 > this` |
 | `LIVE_EXEC_SYNC_ENABLED` | `true` | During EXECUTION, auto-sync recent 1m bars from broker into Mongo |
 | `LIVE_EXEC_SYNC_INTERVAL_MINUTES` | `15` | Interval between execution-time auto-sync passes |
 | `LIVE_EXEC_SYNC_LOOKBACK_MINUTES` | `120` | Lookback window used per execution-time auto-sync pass |
@@ -68,6 +72,17 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 - `[YESTERDAY'S LESSONS]` — analyst post-mortem summary from prior session (if available)
 
 If no API key: judge always returns `approve=false` (no trades fire).
+
+### Shadow eval workflow (recommended)
+
+1. Set:
+   - `SHADOW_EVAL_ENABLED=true`
+   - `SHADOW_EVAL_ENFORCE_LAYER1=false`
+2. Let paper daemon run for a few sessions.
+3. Analyze disagreements:
+   - `bun run shadow-eval-report -- --days 5 --env PAPER`
+4. Enforce only after review:
+   - `SHADOW_EVAL_ENFORCE_LAYER1=true`
 
 ---
 

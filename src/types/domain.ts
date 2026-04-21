@@ -59,6 +59,18 @@ export interface TradeLogDoc extends Document {
   technical_snapshot: TechnicalSnapshot;
   ai_confidence: number;
   ai_reasoning: string;
+  shadow_eval?: {
+    enabled: boolean;
+    layer1_decision: "PASS" | "BLOCK";
+    layer1_reasons?: string[];
+    layer1_volume_z?: number;
+    layer1_atr_pct?: number;
+    layer2_decision: "APPROVE" | "DENY";
+    layer2_via?: "skip-judge" | "pinecone-gate" | "llm-judge" | "layer1-veto";
+    final_decision: "APPROVE" | "DENY";
+    counterfactual_two_layer_decision: "APPROVE" | "DENY";
+    disagreed: boolean;
+  };
   /** Set on rows written to `trades_backtest` */
   backtest_run_id?: string;
   result?: {

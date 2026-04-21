@@ -49,6 +49,11 @@
 │               ├─ [GATE 2] Strategy auto-gate (rolling PF/WR)        │
 │               │   isStrategyAllowed() → skip if PF<0.8 or WR<30%  │
 │               │                                                     │
+│               ├─ [SHADOW] Layer-1 veto candidate (optional)         │
+│               │   evaluate volume z-score + ATR%                    │
+│               │   log PASS/BLOCK + counterfactual decision          │
+│               │   enforce only if SHADOW_EVAL_ENFORCE_LAYER1=true   │
+│               │                                                     │
 │               └─ maybeExecute() per surviving trigger:              │
 │                    ├─ embedCandlePattern() → 1536-dim vector        │
 │                    ├─ querySimilarPatterns() → Pinecone top-8       │
@@ -74,7 +79,8 @@
 │                    │   [YESTERDAY'S LESSONS] analyst summary        │
 │                    │                                                │
 │                    └─ approve? → placePaperOrder() → MongoDB trades │
-│                                 stores: qty, atr_at_entry, ai_conf  │
+│                                 stores: qty, atr_at_entry, ai_conf, │
+│                                 shadow_eval (when enabled)          │
 │                                                                     │
 │  IST 15:15  SQUARE_OFF → closeIntraday() for all tickers           │
 │                                                                     │
@@ -206,6 +212,7 @@ src/
 │   ├── discovery-sync.ts        # CLI entry for discovery
 │   ├── backtest.ts              # CLI entry for backtest
 │   ├── backtest-analyze.ts      # CLI entry for result analysis
+│   ├── shadow-eval-report.ts    # CLI summary of layer-1 shadow disagreements
 │   ├── weekend-optimize.ts      # Pattern mining + Pinecone upsert
 │   ├── analyst.ts               # CLI entry for post-mortem
 │   ├── backfill-news.ts         # Manual news seed (edit script)
@@ -216,7 +223,7 @@ src/
 │
 └── types/
     └── domain.ts                # TypeScript interfaces (Ohlc1m, TradeLogDoc, etc.)
-                                 # TradeLogDoc includes: qty, atr_at_entry fields
+                                 # TradeLogDoc includes: qty, atr_at_entry, shadow_eval fields
 ```
 
 ---
@@ -303,9 +310,9 @@ All 14 strategies are enabled by default. The strategy auto-gate (`strategyTrack
 
 ---
 
-## Signal Pipeline (4 Gates)
+## Signal Pipeline (4 Gates + Shadow Layer)
 
-Every trigger must pass through all four gates before an order fires:
+Every trigger must pass through four production gates before an order fires. A shadow layer-1 veto can run in observe-only mode for calibration.
 
 ```
 TriggerHit[]
@@ -318,6 +325,11 @@ TriggerHit[]
     │  loadStrategyHealth() (cached, refreshed each EXECUTION session start)
     │  isStrategyAllowed() → false if PF < 0.8 or WR < 30% over last 20 trades
     │  minimum 10 trades required before gating kicks in
+    │
+    ▼ SHADOW LAYER 1 (optional)
+    │  evaluate volume z-score + ATR% thresholds
+    │  record PASS/BLOCK + counterfactual two-layer decision in trades.shadow_eval
+    │  enforce only when SHADOW_EVAL_ENFORCE_LAYER1=true
     │
     ▼ GATE 3: Pinecone Pattern Gate
     │  embedCandlePattern(last 30 1m bars) → 1536-dim vector
@@ -461,6 +473,15 @@ Index: `{ticker, ts}` unique + `{ts: -1}`
   "technical_snapshot": { "rsi": 58, "z_score_vwap": 1.2, ... },
   "ai_confidence": 0.87,
   "ai_reasoning": "Strong ORB with volume confirmation...",
+  "shadow_eval": {
+    "enabled": true,
+    "layer1_decision": "BLOCK",
+    "layer1_reasons": ["volume_z=-1.10<-0.80"],
+    "layer2_decision": "APPROVE",
+    "final_decision": "APPROVE",
+    "counterfactual_two_layer_decision": "DENY",
+    "disagreed": true
+  },
   "order_executed": true,
   "backtest_run_id": "bt-1745123456789",
   "result": {

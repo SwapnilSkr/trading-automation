@@ -6,7 +6,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "typecheck": "tsc --noEmit",
     "dev": "bun run --watch src/index.ts",
-    "build": "rm -rf dist && bun build src/index.ts --outfile dist/index.js --target node && bun build src/analyst.ts --outfile dist/analyst.js --target node && bun build src/cli/live-analyze.ts --outfile dist/live-analyze.js --target node && bun build src/cli/sync-history.ts --outfile dist/sync-history.js --target node && bun build src/cli/discovery-sync.ts --outfile dist/discovery-sync.js --target node && bun build src/cli/backfill-news.ts --outfile dist/backfill-news.js --target node && bun build src/cli/backfill-news-scraper.ts --outfile dist/backfill-news-scraper.js --target node && bun build src/cli/weekend-optimize.ts --outfile dist/weekend-optimize.js --target node && bun build src/cli/backtest.ts --outfile dist/backtest.js --target node && bun build src/cli/backtest-snapshots.ts --outfile dist/backtest-snapshots.js --target node",
+    "build": "rm -rf dist && bun build src/index.ts --outfile dist/index.js --target node && bun build src/analyst.ts --outfile dist/analyst.js --target node && bun build src/cli/live-analyze.ts --outfile dist/live-analyze.js --target node && bun build src/cli/shadow-eval-report.ts --outfile dist/shadow-eval-report.js --target node && bun build src/cli/sync-history.ts --outfile dist/sync-history.js --target node && bun build src/cli/discovery-sync.ts --outfile dist/discovery-sync.js --target node && bun build src/cli/backfill-news.ts --outfile dist/backfill-news.js --target node && bun build src/cli/backfill-news-scraper.ts --outfile dist/backfill-news-scraper.js --target node && bun build src/cli/weekend-optimize.ts --outfile dist/weekend-optimize.js --target node && bun build src/cli/backtest.ts --outfile dist/backtest.js --target node && bun build src/cli/backtest-snapshots.ts --outfile dist/backtest-snapshots.js --target node",
     "start": "bun run src/index.ts",
     "analyst": "bun run src/analyst.ts",
     "sync-history": "bun run src/cli/sync-history.ts",
@@ -19,6 +19,7 @@
     "backtest-ablation": "bun run src/cli/backtest-ablation.ts --",
     "backtest-analyze": "bun run src/cli/backtest-analyze.ts --",
     "live-analyze": "bun run src/cli/live-analyze.ts --",
+    "shadow-eval-report": "bun run src/cli/shadow-eval-report.ts --",
     "migrate-live-trades": "bun run src/cli/migrate-live-trades.ts --",
     "reconcile-live-exits": "bun run src/cli/reconcile-live-exits.ts --"
   },

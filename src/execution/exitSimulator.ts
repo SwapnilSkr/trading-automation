@@ -10,6 +10,7 @@ import { env } from "../config/env.js";
 export interface SimPosition {
   ticker: string;
   entryPrice: number;
+  qty: number;
   entryReferencePrice?: number;
   entrySlippageRupees?: number;
   side: "BUY" | "SELL";
@@ -28,7 +29,6 @@ export interface ExitParams {
   targetPct: number;
   trailTriggerPct: number;
   trailDistPct: number;
-  qty: number;
   pessimisticIntrabar: boolean;
   realism: BacktestRealismConfig;
 }
@@ -158,22 +158,22 @@ export async function processBarForExits(
         result.exitPrice,
         closeSide,
         bar,
-        params.qty,
+        pos.qty,
         params.realism
       );
       const grossPnl =
         pos.side === "BUY"
-          ? (fill.fillPrice - pos.entryPrice) * params.qty
-          : (pos.entryPrice - fill.fillPrice) * params.qty;
+          ? (fill.fillPrice - pos.entryPrice) * pos.qty
+          : (pos.entryPrice - fill.fillPrice) * pos.qty;
       const charges = computeIntradayCharges(
         pos.side,
         pos.entryPrice,
         fill.fillPrice,
-        params.qty,
+        pos.qty,
         params.realism
       );
       const netPnl = grossPnl - charges.total;
-      const netPct = netPnl / Math.max(1e-9, pos.entryPrice * params.qty);
+      const netPct = netPnl / Math.max(1e-9, pos.entryPrice * pos.qty);
       const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
       const outcome: TradeOutcome =
         netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";
@@ -211,22 +211,22 @@ export async function closeAllAtEod(
       lastBar.c,
       closeSide,
       lastBar,
-      params.qty,
+      pos.qty,
       params.realism
     );
     const grossPnl =
       pos.side === "BUY"
-        ? (fill.fillPrice - pos.entryPrice) * params.qty
-        : (pos.entryPrice - fill.fillPrice) * params.qty;
+        ? (fill.fillPrice - pos.entryPrice) * pos.qty
+        : (pos.entryPrice - fill.fillPrice) * pos.qty;
     const charges = computeIntradayCharges(
       pos.side,
       pos.entryPrice,
       fill.fillPrice,
-      params.qty,
+      pos.qty,
       params.realism
     );
     const netPnl = grossPnl - charges.total;
-    const netPct = netPnl / Math.max(1e-9, pos.entryPrice * params.qty);
+    const netPct = netPnl / Math.max(1e-9, pos.entryPrice * pos.qty);
     const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
     const outcome: TradeOutcome =
       netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";

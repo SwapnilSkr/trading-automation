@@ -150,6 +150,14 @@ export const env = {
   liveSkipJudge: process.env.LIVE_SKIP_JUDGE === "true",
   /** If true, print per-scan trigger and judge decision logs in live daemon */
   liveDebugScans: process.env.LIVE_DEBUG_SCANS !== "false",
+  /** Log layer-1 shadow decisions alongside live decisions (observe-only by default). */
+  shadowEvalEnabled: bool("SHADOW_EVAL_ENABLED", false),
+  /** If true, enforce layer-1 veto before Pinecone/LLM. Keep false until shadow metrics are validated. */
+  shadowEvalEnforceLayer1: bool("SHADOW_EVAL_ENFORCE_LAYER1", false),
+  /** Layer-1 veto: block setups if volume z-score is below this threshold. */
+  layer1MinVolumeZ: num("LAYER1_MIN_VOLUME_Z", -0.8),
+  /** Layer-1 veto: block setups when ATR(14)/price% exceeds this threshold. */
+  layer1MaxAtrPct: num("LAYER1_MAX_ATR_PCT", 3.5),
   /**
    * During EXECUTION window, periodically backfill recent 1m bars so scanning
    * does not depend on post-market SYNC only.

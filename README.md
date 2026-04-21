@@ -59,8 +59,9 @@ Fixed-% exits (fallback when ATR unavailable):
 **Signal pipeline (EXECUTION phase, per ticker, every 60s):**
 1. **Vol-regime gate** — classify intraday vol as LOW/MID/HIGH; suppress strategies that don't work in current regime
 2. **Strategy auto-gate** — disable strategies with rolling PF < 0.8 or WR < 30% over last 20 trades
-3. **Pinecone gate** — embed pattern → query similar; if top score ≥ 0.92 + WIN, auto-approve (no LLM cost)
-4. **Judge (LLM)** — Claude Sonnet 4 via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
+3. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
+4. **Pinecone gate** — embed pattern → query similar; if top score ≥ 0.92 + WIN, auto-approve (no LLM cost)
+5. **Judge (LLM)** — Claude Sonnet 4 via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
 
 **Token cost:** With the Pinecone gate at 0.92, most trades in recognized regimes skip the LLM entirely. Expect 3–10 judge calls per day. At Claude Sonnet 4 prices (~$0.003/call = cents/day).
 
@@ -189,6 +190,7 @@ curl http://127.0.0.1:3000/health
 | `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
+| `bun run shadow-eval-report` | Summarize shadow layer-1 vs layer-2 disagreement metrics from `trades.shadow_eval` |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
 ### sync-history flags
@@ -238,6 +240,14 @@ bun run live-analyze                            # today IST
 bun run live-analyze -- --date 2026-04-20      # specific IST date
 ```
 
+### shadow-eval-report flags
+```bash
+bun run shadow-eval-report                      # today IST
+bun run shadow-eval-report -- --days 5          # last 5 IST sessions ending today
+bun run shadow-eval-report -- --days 5 --env PAPER
+bun run shadow-eval-report -- --date 2026-04-20 --env LIVE
+```
+
 ---
 
 ## Tuning the system
@@ -262,6 +272,12 @@ EXIT_STOP_PCT=0.012           # 1.2% stop loss
 EXIT_TARGET_PCT=0.020         # 2.0% profit target
 EXIT_TRAIL_TRIGGER_PCT=0.008  # start trailing after 0.8% profit
 EXIT_TRAIL_DIST_PCT=0.005     # trail 0.5% below peak
+
+# Shadow two-layer evaluation (observe-only rollout)
+SHADOW_EVAL_ENABLED=false         # true = log layer1/layer2/final/counterfactual per decision
+SHADOW_EVAL_ENFORCE_LAYER1=false  # keep false initially; true = hard veto before Pinecone/LLM
+LAYER1_MIN_VOLUME_Z=-0.8          # layer1 blocks if volume z-score is below this
+LAYER1_MAX_ATR_PCT=3.5            # layer1 blocks if ATR(14)/price% exceeds this
 
 # Strategy toggles — all enabled; auto-gate disables losers dynamically
 BACKTEST_ENABLE_ORB_15M=true
@@ -300,6 +316,19 @@ JUDGE_MODEL=anthropic/claude-sonnet-4
 LESSONS_FEEDBACK_ENABLED=true # inject yesterday's lessons into judge prompt
 ```
 
+### Shadow-eval rollout (recommended)
+```bash
+# 1) Observe only
+SHADOW_EVAL_ENABLED=true
+SHADOW_EVAL_ENFORCE_LAYER1=false
+
+# 2) Let paper daemon run for a few sessions, then inspect disagreement
+bun run shadow-eval-report -- --days 5 --env PAPER
+
+# 3) Only after review, enforce layer-1 in paper first
+SHADOW_EVAL_ENFORCE_LAYER1=true
+```
+
 **Common tuning moves based on backtest output:**
 - Profit factor < 1 and win rate > 50%: targets too small, raise `ATR_TARGET_MULTIPLE` or `EXIT_TARGET_PCT`
 - Profit factor < 1 and win rate < 40%: entries are bad, tighten Z-score threshold or ORB volume filter
@@ -318,7 +347,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 - **Indicators** — `src/indicators/`: VWAP, RSI(14), Z-score vs VWAP, volume Z-score, RSI divergence, opening range, prior-day high/low, **ATR(14)**.
 - **Strategies** — `src/strategies/triggers.ts`: 14 strategies — ORB_15M, ORB_RETEST_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT, VWAP_PULLBACK_TREND, PREV_DAY_HIGH_LOW_BREAK_RETEST, EMA20_BREAK_RETEST, VWAP_RECLAIM_CONTINUATION, INITIAL_BALANCE_BREAK_RETEST, VOLATILITY_CONTRACTION_BREAKOUT, INSIDE_BAR_BREAKOUT_WITH_RETEST, OPEN_DRIVE_PULLBACK, ORB_FAKEOUT_REVERSAL.
 - **Strategy auto-gate** — `src/execution/strategyTracker.ts`: rolling 20-trade PF/WR gate; auto-disables underperforming strategies.
-- **Execution** — `src/execution/ExecutionEngine.ts`: signal → vol-regime gate → strategy gate → Pinecone gate → enriched judge → ATR-based sizing → paper order → live exit tracking.
+- **Execution** — `src/execution/ExecutionEngine.ts`: signal → vol-regime gate → strategy gate → optional layer-1 shadow eval → Pinecone gate → enriched judge → ATR-based sizing → paper order → live exit tracking.
 - **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/target/trailing for backtest, ATR-aware.
 - **Discovery** — `src/services/discoveryRun.ts` + `src/discovery/performerScore.ts`: Nifty 100 momentum score, writes `active_watchlist` + `watchlist_snapshots`.
 - **Pattern memory** — `src/pinecone/patternStore.ts` + `src/embeddings/patternEmbedding.ts`: log-return embeddings, cosine similarity, WIN/LOSS metadata.

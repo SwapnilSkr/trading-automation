@@ -87,7 +87,6 @@ export async function runBacktestReplay(
     targetPct: env.exitTargetPct,
     trailTriggerPct: env.exitTrailTriggerPct,
     trailDistPct: env.exitTrailDistPct,
-    qty: env.backtestPositionQty,
     pessimisticIntrabar: env.backtestPessimisticIntrabar,
     realism: getBacktestRealismConfig(),
   };
@@ -145,6 +144,8 @@ export async function runBacktestReplay(
         activateIndex: number;
         signalPrice: number;
         side: "BUY" | "SELL";
+        qty: number;
+        atrAtEntry?: number;
         doc: TradeLogDoc;
       }> = [];
       let lastScanMs = sessionStart.getTime() - 1; // force first scan
@@ -164,19 +165,22 @@ export async function runBacktestReplay(
                 ref,
                 p.side,
                 bar,
-                exitParams.qty,
+                p.qty,
                 exitParams.realism
               );
               p.doc.entry_time = bar.ts;
+              p.doc.entry_price = fill.fillPrice;
               openPositions.push({
                 ticker,
                 entryPrice: fill.fillPrice,
+                qty: p.qty,
                 entryReferencePrice: ref,
                 entrySlippageRupees: fill.slippageRupees,
                 side: p.side,
                 strategy: p.doc.strategy as StrategyId,
                 entryTime: bar.ts,
                 peakPrice: fill.fillPrice,
+                atrAtEntry: p.atrAtEntry,
                 doc: p.doc,
               });
               summary.tradesEntered += 1;
@@ -213,7 +217,13 @@ export async function runBacktestReplay(
         const newsHeadlines = await getHeadlinesForBacktest(bar.ts);
 
         // Capture newly entered trades so we can simulate exits
-        const newEntries: { doc: TradeLogDoc; entryPrice: number; side: "BUY" | "SELL" }[] = [];
+        const newEntries: {
+          doc: TradeLogDoc;
+          entryPrice: number;
+          side: "BUY" | "SELL";
+          qty: number;
+          atrAtEntry?: number;
+        }[] = [];
 
         const bt: BacktestPassOptions = {
           simulatedAt: bar.ts,
@@ -223,7 +233,14 @@ export async function runBacktestReplay(
           runId,
           skipJudge: config.skipJudge,
           onTradeEntry: async (doc, entryPrice, side) => {
-            newEntries.push({ doc, entryPrice, side });
+            const qty = doc.qty ?? env.backtestPositionQty;
+            newEntries.push({
+              doc,
+              entryPrice,
+              side,
+              qty,
+              atrAtEntry: doc.atr_at_entry,
+            });
           },
         };
 
@@ -240,13 +257,15 @@ export async function runBacktestReplay(
         summary.scanCalls += 1;
 
         // Register new positions for exit tracking
-        for (const { doc, entryPrice, side } of newEntries) {
+        for (const { doc, entryPrice, side, qty, atrAtEntry } of newEntries) {
           const activateIndex = bi + Math.max(0, exitParams.realism.entryLatencyBars);
           if (activateIndex >= sessionBars.length) continue;
           pendingEntries.push({
             activateIndex,
             signalPrice: entryPrice,
             side,
+            qty,
+            atrAtEntry,
             doc,
           });
         }
