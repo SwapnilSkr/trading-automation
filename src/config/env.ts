@@ -19,6 +19,11 @@ function bool(name: string, def: boolean): boolean {
   return v === "true";
 }
 
+function str(name: string, def: string): string {
+  const v = process.env[name];
+  return v === undefined || v === "" ? def : v;
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
@@ -123,7 +128,7 @@ export const env = {
   preopenMaxCandidates: num("PREOPEN_MAX_CANDIDATES", 50),
   preopenMaxPicks: num("PREOPEN_MAX_PICKS", 10),
 
-  dailyStopLoss: num("DAILY_STOP_LOSS", 25_000),
+  dailyStopLoss: num("DAILY_STOP_LOSS", 15_000),
   maxConcurrentTrades: num("MAX_CONCURRENT_TRADES", 5),
   executionEnv: (process.env.EXECUTION_ENV ?? "PAPER") as "PAPER" | "LIVE",
 
@@ -176,6 +181,18 @@ export const env = {
   /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
   pineconeGateEnabled: process.env.PINECONE_GATE_ENABLED !== "false",
   pineconeGateMinScore: num("PINECONE_GATE_MIN_SCORE", 0.92),
+  /** Consensus gate: minimum strong neighbors required before auto-approval */
+  pineconeGateMinNeighbors: num("PINECONE_GATE_MIN_NEIGHBORS", 3),
+  /** Consensus gate: strong neighbor score threshold */
+  pineconeGateConsensusMinScore: num("PINECONE_GATE_CONSENSUS_MIN_SCORE", 0.85),
+  /** Consensus gate: minimum weighted win rate across strong neighbors */
+  pineconeGateMinWinRate: num("PINECONE_GATE_MIN_WIN_RATE", 0.6),
+  /** Consensus gate: same-strategy neighbor requirement */
+  pineconeGateRequireSameStrategy: bool("PINECONE_GATE_REQUIRE_SAME_STRATEGY", true),
+  /** Consensus gate: same-sector neighbor weight multiplier */
+  pineconeGateSameSectorWeight: num("PINECONE_GATE_SAME_SECTOR_WEIGHT", 1.2),
+  /** Consensus gate: same-vol-regime neighbor weight multiplier */
+  pineconeGateSameRegimeWeight: num("PINECONE_GATE_SAME_REGIME_WEIGHT", 1.1),
 
   /** Skip OpenAI embed + Pinecone upsert when vector id already exists (weekend-optimize) */
   weekendOptimizeSkipExisting:
@@ -190,6 +207,54 @@ export const env = {
    * Empty disables the route (returns 404).
    */
   emergencySquareOffSecret: process.env.EMERGENCY_SQUARE_OFF_SECRET ?? "",
+
+  // ── Institutional risk gates ───────────────────────────────────────────────
+  /** Max open positions in one sector */
+  maxSectorPositions: num("MAX_SECTOR_POSITIONS", 2),
+  /** Max open positions on the same side */
+  maxSameSidePositions: num("MAX_SAME_SIDE_POSITIONS", 3),
+  /** Max allowed rolling correlation with any open ticker */
+  maxCorrelationWithOpen: num("MAX_CORRELATION_WITH_OPEN", 0.7),
+  /** Calendar-day lookback used to compute daily return correlations */
+  correlationLookbackDays: num("CORRELATION_LOOKBACK_DAYS", 20),
+  /** Gross notional exposure cap vs account equity */
+  maxGrossExposurePct: num("MAX_GROSS_EXPOSURE_PCT", 1.5),
+  /** Beta-weighted notional exposure cap vs account equity */
+  maxBetaExposurePct: num("MAX_BETA_EXPOSURE_PCT", 2.0),
+  /** Rolling 3-session net PnL hard stop */
+  rolling3dDrawdownLimit: num("ROLLING_3D_DRAWDOWN_LIMIT", 40_000),
+  /** Rolling 7-calendar-day net PnL hard stop */
+  weeklyDrawdownLimit: num("WEEKLY_DRAWDOWN_LIMIT", 50_000),
+  /** Consecutive realized losses before position size is throttled */
+  consecutiveLossThrottle: num("CONSECUTIVE_LOSS_THROTTLE", 3),
+  /** Position-size multiplier once consecutive loss throttle is active */
+  lossThrottleSizeMultiplier: num("LOSS_THROTTLE_SIZE_MULTIPLIER", 0.5),
+
+  // ── Market regime hard gates ───────────────────────────────────────────────
+  marketGateEnabled: bool("MARKET_GATE_ENABLED", true),
+  marketBlockLongBreakoutsNiftyPct: num("MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT", -1.0),
+  marketBlockLongBreakoutsBreadth: num("MARKET_BLOCK_LONG_BREAKOUTS_BREADTH", 0.3),
+  marketWeakNiftyPct: num("MARKET_WEAK_NIFTY_PCT", -0.5),
+  marketWeakBreadth: num("MARKET_WEAK_BREADTH", 0.4),
+  marketWeakSizeMultiplier: num("MARKET_WEAK_SIZE_MULTIPLIER", 0.5),
+
+  // ── Strategy time windows ─────────────────────────────────────────────────
+  timeWindowsEnabled: bool("TIME_WINDOWS_ENABLED", true),
+  noFreshEntriesAfter: str("NO_FRESH_ENTRIES_AFTER", "14:30"),
+  orbEntryStart: str("ORB_ENTRY_START", "09:30"),
+  orbEntryEnd: str("ORB_ENTRY_END", "11:30"),
+  vwapEntryStart: str("VWAP_ENTRY_START", "10:00"),
+  vwapEntryEnd: str("VWAP_ENTRY_END", "14:00"),
+  meanRevEntryStart: str("MEAN_REV_ENTRY_START", "10:00"),
+  meanRevEntryEnd: str("MEAN_REV_ENTRY_END", "14:30"),
+  defaultEntryStart: str("DEFAULT_ENTRY_START", "09:30"),
+  defaultEntryEnd: str("DEFAULT_ENTRY_END", "14:30"),
+
+  // ── Trigger quality gates ─────────────────────────────────────────────────
+  ema20RetestMinVolumeZ: num("EMA20_RETEST_MIN_VOLUME_Z", 0),
+  vwapContinuationMinVolumeZ: num("VWAP_CONTINUATION_MIN_VOLUME_Z", 0.5),
+  retestMaxBarsAfterBreak: num("RETEST_MAX_BARS_AFTER_BREAK", 20),
+  orbFakeoutConfirmationBars: num("ORB_FAKEOUT_CONFIRMATION_BARS", 2),
 
   // ── Exit / Risk parameters ─────────────────────────────────────────────────
   /** Stop-loss distance from entry as fraction (fallback when ATR unavailable) */
@@ -254,8 +319,19 @@ export const env = {
   atrExitsEnabled: bool("ATR_EXITS_ENABLED", true),
   /** Enable ATR-based position sizing (false = use fixed qty) */
   atrSizingEnabled: bool("ATR_SIZING_ENABLED", true),
-  /** Confidence scaling: multiply qty by (0.5 + confidence * factor), clamped [0.5, 2.0] */
+  /** Confidence scaling factor, only used when CONFIDENCE_SIZING_ENABLED=true. */
   confidenceScaleFactor: num("CONFIDENCE_SCALE_FACTOR", 1.5),
+  /** If false, LLM/Pinecone confidence approves/denies but does not increase size */
+  confidenceSizingEnabled: bool("CONFIDENCE_SIZING_ENABLED", false),
+  /** Upper bound for confidence-based size multiplier when enabled */
+  confidenceMultiplierMax: num("CONFIDENCE_MULTIPLIER_MAX", 1.3),
+
+  // ── Partial exits ──────────────────────────────────────────────────────────
+  partialExitsEnabled: bool("PARTIAL_EXITS_ENABLED", true),
+  partialExit1AtrMultiple: num("PARTIAL_EXIT_1_ATR_MULTIPLE", 1.0),
+  partialExit1QtyPct: num("PARTIAL_EXIT_1_QTY_PCT", 0.33),
+  partialExit2AtrMultiple: num("PARTIAL_EXIT_2_ATR_MULTIPLE", 2.0),
+  partialExit2QtyPct: num("PARTIAL_EXIT_2_QTY_PCT", 0.33),
 
   // ── Strategy auto-gate (rolling performance filter) ────────────────────
   /** Enable automatic strategy disabling based on rolling performance */

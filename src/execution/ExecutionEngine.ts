@@ -16,9 +16,11 @@ import {
   fetchOhlcRange,
   fetchLatestOpenExecutedTradeByTicker,
   fetchOpenExecutedTrades,
+  fetchExecutedTradesSince,
   insertBacktestTrade,
   insertTrade,
   updateTradeExit,
+  updateTradePartialExits,
 } from "../db/repositories.js";
 import { atr as computeAtr, rsi, vwap, volumeZScore } from "../indicators/core.js";
 import {
@@ -39,7 +41,12 @@ import {
   type TriggerHit,
 } from "../strategies/triggers.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
-import { checkSafety, createSafetyState, type SafetyState } from "./safety.js";
+import {
+  checkSafety,
+  createSafetyState,
+  evaluateSafety,
+  type SafetyState,
+} from "./safety.js";
 import {
   loadStrategyHealth,
   isStrategyAllowed,
@@ -49,6 +56,25 @@ import {
 import { DateTime } from "luxon";
 import { IST, nowIST } from "../time/ist.js";
 import type { ObjectId } from "mongodb";
+import {
+  evaluateMarketRegime,
+  type MarketRegimeSnapshot,
+} from "../risk/marketRegime.js";
+import {
+  evaluatePortfolioRisk,
+  type PortfolioPosition,
+} from "../risk/portfolioRisk.js";
+import { evaluateTimeWindow } from "../risk/timeWindow.js";
+import { getTickerSector } from "../market/tickerMetadata.js";
+import { classifyVolRegimeFromCandles } from "../market/volRegime.js";
+import {
+  getPartialExitPlan,
+  partialTargetHit,
+  partialTargetPrice,
+  plannedPartialQty,
+  pnlForExit,
+  type PartialExitReason,
+} from "./partialExits.js";
 
 export interface BacktestPassOptions {
   /** Wall-clock time being simulated (IST session context) */
@@ -61,6 +87,8 @@ export interface BacktestPassOptions {
   runId?: string;
   /** If true, skip OpenRouter entirely (deterministic deny) */
   skipJudge?: boolean;
+  marketSnapshot?: MarketRegimeSnapshot;
+  portfolioPositions?: PortfolioPosition[];
   /**
    * If set, called instead of `insertBacktestTrade` — lets the orchestrator
    * simulate exits before persisting the completed trade document.
@@ -81,6 +109,10 @@ interface LivePosition {
   strategy: string;
   tradeId?: ObjectId;
   qty: number;
+  remainingQty: number;
+  realizedPnl: number;
+  partialExits: NonNullable<TradeLogDoc["partial_exits"]>;
+  completedPartialReasons: PartialExitReason[];
   atrAtEntry?: number;
 }
 
@@ -89,6 +121,15 @@ interface Layer1Decision {
   reasons: string[];
   atrPct?: number;
   volumeZ?: number;
+}
+
+interface SizingDecision {
+  qty: number;
+  baseQty: number;
+  confidenceMultiplier: number;
+  riskMultiplier: number;
+  marketMultiplier: number;
+  stopDistance?: number;
 }
 
 export class ExecutionEngine {
@@ -119,6 +160,29 @@ export class ExecutionEngine {
     }
   }
 
+  /** Load realized PnL guardrails from Mongo at session start. */
+  async refreshRiskControls(): Promise<void> {
+    const now = nowIST();
+    const sinceWeek = now.minus({ days: 7 }).toJSDate();
+    const since3d = now.minus({ days: 3 }).toJSDate();
+    const todayStart = now.startOf("day").toJSDate();
+    const rows = await fetchExecutedTradesSince(sinceWeek, env.executionEnv);
+    const pnlSince = (from: Date) =>
+      rows
+        .filter((t) => t.exit_time !== undefined && t.exit_time >= from)
+        .reduce((s, t) => s + (t.result?.pnl ?? 0), 0);
+    this.safety.weeklyPnl = pnlSince(sinceWeek);
+    this.safety.rolling3dPnl = pnlSince(since3d);
+    this.safety.dailyPnl = pnlSince(todayStart);
+
+    this.safety.consecutiveLosses = 0;
+    for (const t of [...rows].reverse()) {
+      if (!t.result?.outcome) continue;
+      if (t.result.outcome === "LOSS") this.safety.consecutiveLosses++;
+      else break;
+    }
+  }
+
   /** Set yesterday's lessons for judge context injection */
   setYesterdaysLessons(lessons: string | undefined): void {
     this.yesterdaysLessons = lessons;
@@ -128,28 +192,68 @@ export class ExecutionEngine {
    * Compute position size based on ATR and confidence.
    * Risk a fixed % of equity per trade, scaled by judge confidence.
    */
-  private computeQty(
+  private computeSizing(
     entryPrice: number,
     atrValue: number | undefined,
-    confidence: number
-  ): number {
+    confidence: number,
+    riskMultiplier: number,
+    marketMultiplier: number
+  ): SizingDecision {
     if (!env.atrSizingEnabled || !atrValue || atrValue <= 0) {
-      return env.backtestPositionQty;
+      const baseQty = env.backtestPositionQty;
+      const qty = Math.max(
+        env.minQtyPerTrade,
+        Math.min(env.maxQtyPerTrade, Math.floor(baseQty * riskMultiplier * marketMultiplier))
+      );
+      return {
+        qty,
+        baseQty,
+        confidenceMultiplier: 1,
+        riskMultiplier,
+        marketMultiplier,
+      };
     }
     const riskPerTrade = env.accountEquity * env.riskPerTradePct;
     const stopDistance = atrValue * env.atrStopMultiple;
-    if (stopDistance <= 0) return env.minQtyPerTrade;
+    if (stopDistance <= 0) {
+      return {
+        qty: env.minQtyPerTrade,
+        baseQty: env.minQtyPerTrade,
+        confidenceMultiplier: 1,
+        riskMultiplier,
+        marketMultiplier,
+        stopDistance,
+      };
+    }
     const baseQty = Math.floor(riskPerTrade / stopDistance);
-    const confMultiplier = Math.max(
-      0.5,
-      Math.min(2.0, 0.5 + confidence * env.confidenceScaleFactor)
+    const confMultiplier = env.confidenceSizingEnabled
+      ? Math.max(
+          0.5,
+          Math.min(
+            env.confidenceMultiplierMax,
+            0.5 + confidence * env.confidenceScaleFactor
+          )
+        )
+      : 1;
+    const qty = Math.floor(
+      baseQty * confMultiplier * riskMultiplier * marketMultiplier
     );
-    const qty = Math.floor(baseQty * confMultiplier);
-    return Math.max(env.minQtyPerTrade, Math.min(env.maxQtyPerTrade, qty));
+    return {
+      qty: Math.max(env.minQtyPerTrade, Math.min(env.maxQtyPerTrade, qty)),
+      baseQty,
+      confidenceMultiplier: confMultiplier,
+      riskMultiplier,
+      marketMultiplier,
+      stopDistance,
+    };
   }
 
   recordPnl(delta: number): void {
     this.safety.dailyPnl += delta;
+    this.safety.rolling3dPnl += delta;
+    this.safety.weeklyPnl += delta;
+    if (delta < 0) this.safety.consecutiveLosses += 1;
+    else if (delta > 0) this.safety.consecutiveLosses = 0;
   }
 
   getOpenCount(): number {
@@ -167,6 +271,9 @@ export class ExecutionEngine {
     let restored = 0;
     for (const t of openTrades) {
       if (!t.side || typeof t.entry_price !== "number") continue;
+      const partialExits = t.partial_exits ?? [];
+      const partialQty = partialExits.reduce((s, p) => s + p.qty, 0);
+      const remainingQty = Math.max(0, (t.qty ?? 1) - partialQty);
       const existing = this.livePositions.get(t.ticker);
       if (existing && existing.entryTime >= t.entry_time) continue;
       this.livePositions.set(t.ticker, {
@@ -178,6 +285,12 @@ export class ExecutionEngine {
         strategy: t.strategy,
         tradeId: t._id,
         qty: t.qty ?? 1,
+        remainingQty,
+        realizedPnl: partialExits.reduce((s, p) => s + p.pnl, 0),
+        partialExits,
+        completedPartialReasons: partialExits
+          .map((p) => p.reason)
+          .filter((r): r is PartialExitReason => r === "SCALE_1" || r === "SCALE_2"),
         atrAtEntry: t.atr_at_entry,
       });
       restored++;
@@ -205,14 +318,19 @@ export class ExecutionEngine {
     if (pos.side === "BUY" && bar.h > pos.peakPrice) pos.peakPrice = bar.h;
     if (pos.side === "SELL" && bar.l < pos.peakPrice) pos.peakPrice = bar.l;
 
+    await this.processLivePartialExits(pos, bar);
+    if (pos.remainingQty <= 0) return;
+
     // ATR-based exits: use ATR at entry if available, else fall back to fixed %
     const useAtr = env.atrExitsEnabled && pos.atrAtEntry !== undefined && pos.atrAtEntry > 0;
     const stopDist = useAtr
       ? pos.atrAtEntry! * env.atrStopMultiple
       : pos.entryPrice * env.exitStopPct;
-    const targetDist = useAtr
-      ? pos.atrAtEntry! * env.atrTargetMultiple
-      : pos.entryPrice * env.exitTargetPct;
+    const targetDist = env.partialExitsEnabled && useAtr
+      ? Infinity
+      : useAtr
+        ? pos.atrAtEntry! * env.atrTargetMultiple
+        : pos.entryPrice * env.exitTargetPct;
     const trailTriggerDist = useAtr
       ? pos.atrAtEntry! * env.atrTrailTriggerMultiple
       : pos.entryPrice * env.exitTrailTriggerPct;
@@ -260,6 +378,59 @@ export class ExecutionEngine {
     }
   }
 
+  private async processLivePartialExits(
+    pos: LivePosition,
+    bar: Ohlc1m
+  ): Promise<void> {
+    if (!env.partialExitsEnabled) return;
+    if (!pos.atrAtEntry || pos.atrAtEntry <= 0) return;
+
+    for (const step of getPartialExitPlan()) {
+      if (pos.completedPartialReasons.includes(step.reason)) continue;
+      const target = partialTargetPrice(
+        pos.side,
+        pos.entryPrice,
+        pos.atrAtEntry,
+        step.atrMultiple
+      );
+      if (!partialTargetHit(pos.side, bar.c, bar.c, target)) continue;
+      const qty = plannedPartialQty(pos.qty, pos.remainingQty, step.qtyPct);
+      if (qty <= 0) {
+        pos.completedPartialReasons.push(step.reason);
+        continue;
+      }
+
+      const closeSide: "BUY" | "SELL" = pos.side === "BUY" ? "SELL" : "BUY";
+      await this.broker.placePaperOrder({
+        ticker: pos.ticker,
+        side: closeSide,
+        qty,
+        strategy: `${pos.strategy}:${step.reason}`,
+      });
+      const pnl = pnlForExit(pos.side, pos.entryPrice, bar.c, qty);
+      pos.remainingQty = Math.max(0, pos.remainingQty - qty);
+      pos.realizedPnl += pnl.pnl;
+      pos.completedPartialReasons.push(step.reason);
+      pos.partialExits.push({
+        ts: bar.ts,
+        price: bar.c,
+        qty,
+        reason: step.reason,
+        pnl: pnl.pnl,
+        pnl_percent: pnl.pnlPercent,
+        remaining_qty: pos.remainingQty,
+      });
+      if (pos.tradeId) {
+        await updateTradePartialExits(pos.tradeId, pos.partialExits);
+      }
+      if (env.liveDebugScans) {
+        console.log(
+          `[Exit] ${pos.ticker} ${step.reason} qty=${qty} @ ${bar.c.toFixed(2)} remaining=${pos.remainingQty}`
+        );
+      }
+    }
+  }
+
   async forceSquareOffTrackedPosition(
     ticker: string,
     exitPrice: number,
@@ -287,6 +458,8 @@ export class ExecutionEngine {
     if (this.livePositions.has(ticker)) return;
     const t = await fetchLatestOpenExecutedTradeByTicker(ticker, env.executionEnv);
     if (!t || !t.side || typeof t.entry_price !== "number") return;
+    const partialExits = t.partial_exits ?? [];
+    const partialQty = partialExits.reduce((s, p) => s + p.qty, 0);
     const pos: LivePosition = {
       ticker,
       side: t.side,
@@ -296,6 +469,12 @@ export class ExecutionEngine {
       strategy: t.strategy,
       tradeId: t._id,
       qty: t.qty ?? 1,
+      remainingQty: Math.max(0, (t.qty ?? 1) - partialQty),
+      realizedPnl: partialExits.reduce((s, p) => s + p.pnl, 0),
+      partialExits,
+      completedPartialReasons: partialExits
+        .map((p) => p.reason)
+        .filter((r): r is PartialExitReason => r === "SCALE_1" || r === "SCALE_2"),
       atrAtEntry: t.atr_at_entry,
     };
     const result = this.liveResultFromExit(pos, exitPrice);
@@ -316,12 +495,13 @@ export class ExecutionEngine {
       last5m?: Ohlc1m;
       niftyTrendHint?: string;
       newsHeadlines?: string[];
+      marketSnapshot?: MarketRegimeSnapshot;
     },
     backtest?: BacktestPassOptions
   ): Promise<void> {
     if (!checkSafety(this.safety, this.openCount)) return;
 
-    const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines } =
+    const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines, marketSnapshot } =
       args;
     if (sessionCandles.length < 30) {
       if (!backtest && env.liveDebugScans) {
@@ -432,8 +612,18 @@ export class ExecutionEngine {
         niftyTrendHint,
         newsHeadlines,
         sessionCandles,
+        marketSnapshot: marketSnapshot ?? backtest?.marketSnapshot,
       }, backtest);
     }
+  }
+
+  private openPositionsForRisk(): PortfolioPosition[] {
+    return [...this.livePositions.values()].map((p) => ({
+      ticker: p.ticker,
+      side: p.side,
+      entryPrice: p.entryPrice,
+      qty: p.remainingQty,
+    }));
   }
 
   private async maybeExecute(
@@ -443,11 +633,10 @@ export class ExecutionEngine {
       niftyTrendHint?: string;
       newsHeadlines?: string[];
       sessionCandles: Ohlc1m[];
+      marketSnapshot?: MarketRegimeSnapshot;
     },
     backtest?: BacktestPassOptions
   ): Promise<void> {
-    if (!checkSafety(this.safety, this.openCount)) return;
-
     const nowMs = backtest?.simulatedAt.getTime() ?? Date.now();
     const strategyTickerKey = `${hit.strategy}:${ticker}`;
     if (
@@ -462,10 +651,83 @@ export class ExecutionEngine {
       return;
     }
 
+    const entryTime = backtest?.simulatedAt ?? new Date();
     const entryPrice =
       ctx.sessionCandles[ctx.sessionCandles.length - 1]?.c ?? 0;
     const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
     const volZValue = volumeZScore(ctx.sessionCandles, 20);
+    const side: "BUY" | "SELL" = hit.side;
+    const snap = normalizeSnapshot(hit.snapshot);
+    const safetyEval = evaluateSafety(this.safety, this.openCount);
+    const timeEval = evaluateTimeWindow(hit.strategy, entryTime);
+    const marketEval = evaluateMarketRegime(
+      hit.strategy,
+      side,
+      ctx.marketSnapshot
+    );
+    const preliminarySizing = this.computeSizing(
+      entryPrice,
+      atrValue,
+      0.5,
+      safetyEval.throttleMultiplier,
+      marketEval.size_multiplier
+    );
+    const portfolioEval = await evaluatePortfolioRisk({
+      ticker,
+      side,
+      entryPrice,
+      qty: preliminarySizing.qty,
+      openPositions: backtest?.portfolioPositions ?? this.openPositionsForRisk(),
+      at: entryTime,
+      throttleMultiplier: safetyEval.throttleMultiplier,
+    });
+    const hardGateReasons = [
+      ...safetyEval.reasons,
+      ...timeEval.reasons,
+      ...marketEval.reasons,
+      ...portfolioEval.reasons,
+    ];
+
+    const baseDoc: TradeLogDoc = {
+      ticker,
+      entry_time: entryTime,
+      strategy: hit.strategy as StrategyId,
+      env: backtest ? "PAPER" : env.executionEnv,
+      order_executed: false,
+      technical_snapshot: snap,
+      ai_confidence: 0,
+      ai_reasoning: "",
+      risk_eval: {
+        ...portfolioEval,
+        allowed: hardGateReasons.length === 0,
+        reasons: hardGateReasons,
+      },
+      market_eval: marketEval,
+      sizing_eval: {
+        base_qty: preliminarySizing.baseQty,
+        final_qty: preliminarySizing.qty,
+        confidence_multiplier: preliminarySizing.confidenceMultiplier,
+        risk_multiplier: preliminarySizing.riskMultiplier,
+        market_multiplier: preliminarySizing.marketMultiplier,
+        stop_distance: preliminarySizing.stopDistance,
+        confidence_sizing_enabled: env.confidenceSizingEnabled,
+      },
+      ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
+    };
+
+    if (hardGateReasons.length > 0) {
+      baseDoc.ai_reasoning = `RISK_VETO: ${hardGateReasons.join("; ")}`;
+      if (!backtest) this.lastJudgeByStrategyTicker.set(strategyTickerKey, nowMs);
+      if (!backtest && env.liveDebugScans) {
+        console.log(
+          `[Risk] ${ticker} ${hit.strategy} ${side} blocked: ${hardGateReasons.join("; ")}`
+        );
+      }
+      if (backtest?.persistBacktest) await insertBacktestTrade(baseDoc);
+      else if (!backtest) await insertTrade(baseDoc);
+      return;
+    }
+
     const layer1 = evaluateLayer1Decision(entryPrice, atrValue, volZValue);
     const enforceLayer1 = env.shadowEvalEnforceLayer1 && !backtest;
 
@@ -484,6 +746,8 @@ export class ExecutionEngine {
       | "llm-judge"
       | "layer1-veto";
     let patternSummary: string | undefined;
+    const sector = getTickerSector(ticker);
+    const volRegime = classifyVolRegimeFromCandles(ctx.sessionCandles);
     if (enforceLayer1 && !layer1.pass) {
       judge = {
         approve: false,
@@ -535,13 +799,16 @@ export class ExecutionEngine {
         backtest?.judgeModel ??
         (backtest ? env.judgeModelBacktest : undefined);
 
-      const top = neighbors[0];
+      const pineconeConsensus = evaluatePineconeConsensus(
+        neighbors,
+        hit.strategy,
+        sector,
+        volRegime
+      );
       const pineconeGate =
         !backtest &&
         env.pineconeGateEnabled &&
-        top !== undefined &&
-        top.score >= env.pineconeGateMinScore &&
-        top.meta.outcome === "WIN";
+        pineconeConsensus.approve;
 
       const skipJudgeMode =
         backtest?.skipJudge === true || (!backtest && env.liveSkipJudge);
@@ -558,10 +825,8 @@ export class ExecutionEngine {
       } else if (pineconeGate) {
         judge = {
           approve: true,
-          confidence: Math.min(0.99, top.score),
-          reasoning: `PINECONE_MATCH id=${top.id} score=${top.score.toFixed(
-            4
-          )} outcome=${top.meta.outcome}`,
+          confidence: Math.min(0.99, pineconeConsensus.avgScore),
+          reasoning: `PINECONE_CONSENSUS neighbors=${pineconeConsensus.neighborCount} wr=${(pineconeConsensus.winRate * 100).toFixed(0)}% avg_score=${pineconeConsensus.avgScore.toFixed(4)}`,
         };
         decisionVia = "pinecone-gate";
       } else {
@@ -585,35 +850,28 @@ export class ExecutionEngine {
       );
     }
 
-    const snap = normalizeSnapshot(hit.snapshot);
-    const entryTime = backtest?.simulatedAt ?? new Date();
-
+    const sizing = this.computeSizing(
+      entryPrice,
+      atrValue,
+      judge.confidence,
+      safetyEval.throttleMultiplier,
+      marketEval.size_multiplier
+    );
+    const qty = sizing.qty;
     const doc: TradeLogDoc = {
-      ticker,
-      entry_time: entryTime,
-      strategy: hit.strategy as StrategyId,
-      env: backtest ? "PAPER" : env.executionEnv,
-      order_executed: false,
-      technical_snapshot: snap,
+      ...baseDoc,
       ai_confidence: judge.confidence,
       ai_reasoning: judge.reasoning,
-      ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
+      sizing_eval: {
+        base_qty: sizing.baseQty,
+        final_qty: sizing.qty,
+        confidence_multiplier: sizing.confidenceMultiplier,
+        risk_multiplier: sizing.riskMultiplier,
+        market_multiplier: sizing.marketMultiplier,
+        stop_distance: sizing.stopDistance,
+        confidence_sizing_enabled: env.confidenceSizingEnabled,
+      },
     };
-
-    const side: "BUY" | "SELL" =
-      hit.side ??
-      (hit.strategy === "MEAN_REV_Z"
-        ? (snap.z_score_vwap ?? 0) > 0
-          ? "SELL"
-          : "BUY"
-        : hit.strategy === "VWAP_RECLAIM_REJECT"
-          ? (snap.vwap_signal ?? 1) < 0
-            ? "SELL"
-            : "BUY"
-        : "BUY");
-
-    // Compute quantity once (entryPrice + ATR computed above)
-    const qty = this.computeQty(entryPrice, atrValue, judge.confidence);
 
     if (env.shadowEvalEnabled || env.shadowEvalEnforceLayer1) {
       doc.shadow_eval = {
@@ -676,6 +934,10 @@ export class ExecutionEngine {
           strategy: hit.strategy,
           tradeId,
           qty,
+          remainingQty: qty,
+          realizedPnl: 0,
+          partialExits: [],
+          completedPartialReasons: [],
           atrAtEntry: atrValue,
         });
       }
@@ -704,10 +966,10 @@ export class ExecutionEngine {
   ): NonNullable<TradeLogDoc["result"]> {
     const pnlPerShare =
       pos.side === "BUY" ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice;
-    const pnlRaw = pnlPerShare * pos.qty;
+    const pnlRaw = pos.realizedPnl + pnlPerShare * pos.remainingQty;
     const pnl = parseFloat(pnlRaw.toFixed(2));
-    const pctBase = Math.max(1e-9, pos.entryPrice);
-    const pnlPercent = (pnlPerShare / pctBase) * 100;
+    const pctBase = Math.max(1e-9, pos.entryPrice * pos.qty);
+    const pnlPercent = (pnlRaw / pctBase) * 100;
     const outcome =
       pnlPercent > 0.1 ? "WIN" : pnlPercent < -0.1 ? "LOSS" : "BREAKEVEN";
     return {
@@ -851,6 +1113,52 @@ function filterCausalNeighborsForBacktest(
     if (!d.isValid) return false;
     return d.startOf("day") < simDay;
   });
+}
+
+function evaluatePineconeConsensus(
+  neighbors: SimilarPattern[],
+  strategy: StrategyId,
+  sector: string,
+  volRegime: string | undefined
+): { approve: boolean; neighborCount: number; winRate: number; avgScore: number } {
+  const strong = neighbors.filter((n) => {
+    if (n.score < env.pineconeGateConsensusMinScore) return false;
+    if (env.pineconeGateRequireSameStrategy && n.meta.strategy !== strategy) {
+      return false;
+    }
+    return true;
+  });
+
+  if (strong.length === 0) {
+    return { approve: false, neighborCount: 0, winRate: 0, avgScore: 0 };
+  }
+
+  let totalWeight = 0;
+  let winWeight = 0;
+  let scoreSum = 0;
+  for (const n of strong) {
+    let weight = 1;
+    if (n.meta.sector && n.meta.sector === sector) {
+      weight *= env.pineconeGateSameSectorWeight;
+    }
+    if (volRegime && n.meta.vol_regime && n.meta.vol_regime === volRegime) {
+      weight *= env.pineconeGateSameRegimeWeight;
+    }
+    totalWeight += weight;
+    if (n.meta.outcome === "WIN") winWeight += weight;
+    scoreSum += n.score;
+  }
+
+  const winRate = totalWeight > 0 ? winWeight / totalWeight : 0;
+  const avgScore = scoreSum / strong.length;
+  return {
+    approve:
+      strong.length >= env.pineconeGateMinNeighbors &&
+      winRate >= env.pineconeGateMinWinRate,
+    neighborCount: strong.length,
+    winRate,
+    avgScore,
+  };
 }
 
 /** Build last 5 candles as a tabular string for the judge prompt */

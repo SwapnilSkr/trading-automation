@@ -19,9 +19,9 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
    (candles, trades)  │      │  1. Load strategy health     │               │
                       │      │  2. Load yesterday's lessons │               │
    Pinecone ◄─────────│      │  3. Read Mongo 1m candles   │───► trade log │
-   (pattern memory)   │      │  4. Vol-regime gate          │               │
+   (pattern memory)   │      │  4. Risk + market gates      │               │
                       │      │  5. Strategy auto-gate (PF/WR)│              │
-   OpenRouter ◄───────│      │  6. Embed → Pinecone gate   │               │
+   OpenRouter ◄───────│      │  6. Consensus Pinecone gate │               │
    (Claude Sonnet 4)  │      │  7. ATR sizing + judge (LLM) │               │
                       │      └──────────────────────────────┘               │
                       │   SYNC → POST_MORTEM (nightly discovery)            │
@@ -34,7 +34,7 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
 |-------|------|--------------|
 | INIT | 09:00–09:15 | Auth, news fetch, optional pre-open pivot |
 | OBSERVATION | 09:15–09:30 | VWAP calibration, no trades |
-| EXECUTION | 09:30–15:15 | Scan every 60s — triggers → vol-regime gate → strategy auto-gate → Pinecone gate → judge → order |
+| EXECUTION | 09:30–15:15 | Scan every 60s — triggers → vol/strategy gates → hard risk gates → Pinecone consensus → judge → order |
 | SQUARE_OFF | 15:15–15:30 | Close all intraday positions |
 | SYNC | 15:30–17:00 | Backfill today's 1m OHLC from Angel |
 | POST_MORTEM | 18:00–21:00 | Nightly discovery-sync (Nifty 100 rescore) |
@@ -43,8 +43,8 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
 
 ATR-based exits (primary, adapts to each stock's volatility):
 - Stop loss at **1.5× ATR(14)** below entry
-- Profit target at **2.5× ATR(14)** above entry
-- Trailing stop: activates after **1.0× ATR** move, trails **0.75× ATR** below peak
+- Partial exit: **33%** at **1.0× ATR**, **33%** at **2.0× ATR**
+- Remaining runner trails after **1.0× ATR** move, trailing **0.75× ATR** below peak
 - Hard close at 15:15 regardless
 
 Fixed-% exits (fallback when ATR unavailable):
@@ -52,18 +52,19 @@ Fixed-% exits (fallback when ATR unavailable):
 
 **Position sizing (ATR-based, risk-per-trade):**
 - Risk per trade = 1% of account equity (₹5,000 on ₹5L account)
-- `qty = riskPerTrade / (ATR × stopMultiple)` × confidence multiplier
-- Confidence multiplier: `clamp(0.5 + confidence × 1.5, 0.5, 2.0)`
+- `qty = riskPerTrade / (ATR × stopMultiple)` × risk/market multipliers
+- LLM confidence does **not** increase size by default (`CONFIDENCE_SIZING_ENABLED=false`)
 - Bounds: 1–500 shares per trade
 
 **Signal pipeline (EXECUTION phase, per ticker, every 60s):**
 1. **Vol-regime gate** — classify intraday vol as LOW/MID/HIGH; suppress strategies that don't work in current regime
 2. **Strategy auto-gate** — disable strategies with rolling PF < 0.8 or WR < 30% over last 20 trades
-3. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
-4. **Pinecone gate** — embed pattern → query similar; if top score ≥ 0.92 + WIN, auto-approve (no LLM cost)
-5. **Judge (LLM)** — Claude Sonnet 4 via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
+3. **Hard risk/market/time gates** — daily/weekly drawdown, sector/side/correlation/exposure caps, NIFTY/breadth, strategy-specific windows
+4. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
+5. **Pinecone consensus gate** — require 3+ strong same-strategy neighbors and ≥60% weighted win rate before auto-approval
+6. **Judge (LLM)** — Claude Sonnet 4 via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
 
-**Token cost:** With the Pinecone gate at 0.92, most trades in recognized regimes skip the LLM entirely. Expect 3–10 judge calls per day. At Claude Sonnet 4 prices (~$0.003/call = cents/day).
+**Token cost:** Pinecone now skips the LLM only on consensus: 3+ strong same-strategy neighbors and ≥60% weighted win rate. Expect fewer unsafe auto-approvals and more LLM calls until strategy-specific memory builds up.
 
 ---
 
@@ -122,6 +123,8 @@ Writes **one row per calendar day** into Mongo ``news_context`` (used by ``fetch
 bun run weekend-optimize
 ```
 Walks 6 months of 1m candles for every ticker in Mongo, finds bars with >2% moves in the next 30 minutes, embeds the preceding 30-bar window, and upserts to Pinecone. This is what powers the Pinecone gate. Run this every weekend to keep memory fresh.
+
+Note: mined vectors use `strategy=MINED`, so they enrich judge context immediately. Strict no-LLM auto-approval requires same-strategy neighbors; expect more judge calls until strategy-labelled memory accumulates.
 
 ### Step 5 — Run the backtest
 ```bash
@@ -190,7 +193,11 @@ curl http://127.0.0.1:3000/health
 | `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
+| `bun run risk-report` | Summarize hard risk/market gate blocks from `trades.risk_eval` |
 | `bun run shadow-eval-report` | Summarize shadow layer-1 vs layer-2 disagreement metrics from `trades.shadow_eval` |
+| `bun run confidence-calibration-report` | Compare confidence buckets and decision paths vs realized outcomes |
+| `bun run monte-carlo-report` | Randomize backtest trade order to estimate max drawdown distribution |
+| `bun run walk-forward-backtest` | Run rolling out-of-sample backtest windows |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
 
 ### sync-history flags
@@ -240,6 +247,15 @@ bun run live-analyze                            # today IST
 bun run live-analyze -- --date 2026-04-20      # specific IST date
 ```
 
+### risk and validation reports
+```bash
+bun run risk-report -- --days 5 --env PAPER
+bun run confidence-calibration-report -- --days 20 --env PAPER
+bun run confidence-calibration-report -- --source backtest
+bun run monte-carlo-report -- --last --iters 1000
+bun run walk-forward-backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots --skip-judge
+```
+
 ### shadow-eval-report flags
 ```bash
 bun run shadow-eval-report                      # today IST
@@ -265,7 +281,36 @@ ATR_TRAIL_TRIGGER_MULTIPLE=1.0 # activate trail after 1.0x ATR profit
 ATR_TRAIL_DIST_MULTIPLE=0.75  # trail 0.75x ATR below peak
 MAX_QTY_PER_TRADE=500         # cap: never buy more than 500 shares
 MIN_QTY_PER_TRADE=1           # floor: always at least 1 share
-CONFIDENCE_SCALE_FACTOR=1.5   # qty *= clamp(0.5 + confidence * 1.5, 0.5, 2.0)
+CONFIDENCE_SCALE_FACTOR=1.5   # used only when CONFIDENCE_SIZING_ENABLED=true
+CONFIDENCE_SIZING_ENABLED=false # false = confidence approves/denies only, no size boost
+CONFIDENCE_MULTIPLIER_MAX=1.3 # cap when confidence sizing is explicitly enabled
+
+# Institutional hard risk gates
+DAILY_STOP_LOSS=15000
+MAX_SECTOR_POSITIONS=2
+MAX_SAME_SIDE_POSITIONS=3
+MAX_CORRELATION_WITH_OPEN=0.70
+ROLLING_3D_DRAWDOWN_LIMIT=40000
+WEEKLY_DRAWDOWN_LIMIT=50000
+CONSECUTIVE_LOSS_THROTTLE=3
+LOSS_THROTTLE_SIZE_MULTIPLIER=0.5
+
+# Market and time gates
+MARKET_GATE_ENABLED=true
+MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT=-1.0
+MARKET_BLOCK_LONG_BREAKOUTS_BREADTH=0.3
+NO_FRESH_ENTRIES_AFTER=14:30
+ORB_ENTRY_START=09:30
+ORB_ENTRY_END=11:30
+VWAP_ENTRY_START=10:00
+VWAP_ENTRY_END=14:00
+MEAN_REV_ENTRY_START=10:00
+MEAN_REV_ENTRY_END=14:30
+
+# Pinecone consensus auto-approval
+PINECONE_GATE_MIN_NEIGHBORS=3
+PINECONE_GATE_CONSENSUS_MIN_SCORE=0.85
+PINECONE_GATE_MIN_WIN_RATE=0.60
 
 # Fixed-% fallback exits (used when ATR unavailable)
 EXIT_STOP_PCT=0.012           # 1.2% stop loss
@@ -309,11 +354,18 @@ VOL_REGIME_HIGH_MIN_PCT=0.22  # above 0.22% realized vol = HIGH
 # Judge cost control
 JUDGE_COOLDOWN_MS=300000      # 5 min between judge calls per strategy per ticker
 LIVE_SKIP_JUDGE=false         # true => bypass LLM judge (technical-only)
-PINECONE_GATE_MIN_SCORE=0.92  # auto-approve threshold
+PINECONE_GATE_MIN_SCORE=0.92  # legacy; consensus settings above control auto-approval
 JUDGE_MODEL=anthropic/claude-sonnet-4
 
 # Lessons feedback loop
 LESSONS_FEEDBACK_ENABLED=true # inject yesterday's lessons into judge prompt
+
+# Partial exits
+PARTIAL_EXITS_ENABLED=true
+PARTIAL_EXIT_1_ATR_MULTIPLE=1.0
+PARTIAL_EXIT_1_QTY_PCT=0.33
+PARTIAL_EXIT_2_ATR_MULTIPLE=2.0
+PARTIAL_EXIT_2_QTY_PCT=0.33
 ```
 
 ### Shadow-eval rollout (recommended)
@@ -347,8 +399,10 @@ See `docs/architecture.md` for the full system diagram and data flow.
 - **Indicators** — `src/indicators/`: VWAP, RSI(14), Z-score vs VWAP, volume Z-score, RSI divergence, opening range, prior-day high/low, **ATR(14)**.
 - **Strategies** — `src/strategies/triggers.ts`: 14 strategies — ORB_15M, ORB_RETEST_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT, VWAP_PULLBACK_TREND, PREV_DAY_HIGH_LOW_BREAK_RETEST, EMA20_BREAK_RETEST, VWAP_RECLAIM_CONTINUATION, INITIAL_BALANCE_BREAK_RETEST, VOLATILITY_CONTRACTION_BREAKOUT, INSIDE_BAR_BREAKOUT_WITH_RETEST, OPEN_DRIVE_PULLBACK, ORB_FAKEOUT_REVERSAL.
 - **Strategy auto-gate** — `src/execution/strategyTracker.ts`: rolling 20-trade PF/WR gate; auto-disables underperforming strategies.
-- **Execution** — `src/execution/ExecutionEngine.ts`: signal → vol-regime gate → strategy gate → optional layer-1 shadow eval → Pinecone gate → enriched judge → ATR-based sizing → paper order → live exit tracking.
-- **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/target/trailing for backtest, ATR-aware.
+- **Execution** — `src/execution/ExecutionEngine.ts`: signal → vol/strategy gates → hard risk/market/time gates → optional layer-1 shadow eval → Pinecone consensus → enriched judge → ATR-based sizing → paper order → live exit tracking.
+- **Risk gates** — `src/risk/`: portfolio exposure, sector/side/correlation caps, NIFTY/breadth gates, strategy time windows.
+- **Ticker metadata** — `data/ind_nifty100list.csv` provides sectors; `data/ticker_metadata.json` provides beta overrides.
+- **Exit simulation** — `src/execution/exitSimulator.ts`: bar-by-bar stop/trailing plus partial scale-outs for backtest, ATR-aware.
 - **Discovery** — `src/services/discoveryRun.ts` + `src/discovery/performerScore.ts`: Nifty 100 momentum score, writes `active_watchlist` + `watchlist_snapshots`.
 - **Pattern memory** — `src/pinecone/patternStore.ts` + `src/embeddings/patternEmbedding.ts`: log-return embeddings, cosine similarity, WIN/LOSS metadata.
 - **News** — `src/services/news.ts` + `src/services/sentinel-scraper.ts`: ET RSS + Moneycontrol HTML merge → **`news_context`** (daily). Backtest replay headlines come from **`news_archive`** + optional JSON via `src/services/historicalNewsFeed.ts`.
@@ -363,7 +417,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 |-----------|----------|
 | `ohlc_1m` | `{ticker, ts, o, h, l, c, v}` — 1-minute candles |
 | `trades` | Live paper/live trade logs with AI reasoning, qty, atr_at_entry |
-| `trades_backtest` | Backtest trades with full `entry + exit + result.pnl` |
+| `trades_backtest` | Backtest trades with full `entry + partial exits + exit + result.pnl` |
 | `news_context` | **`date` (YYYY-MM-DD)** + `headlines[]` — one row per day; used by **live** `fetchTodayNewsContext` / RSS / scraper backfill |
 | `news_archive` | **`ts`** + `headlines[]` — time-stamped bundles; used by **backtest** `getHeadlinesForBacktest` (no lookahead: headlines with `ts ≤` simulated bar). Fill via `bun run backtest -- --import-news file.json` or your own inserts |
 | `active_watchlist` | `{_id: "current_session", tickers[]}` — current trading list |

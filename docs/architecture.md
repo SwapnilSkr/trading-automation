@@ -33,8 +33,10 @@
 │                                                                     │
 │  IST 09:30  EXECUTION (every 60s)                                   │
 │    ├─ [FIRST TICK] loadStrategyHealth() → rolling PF/WR per strat  │
+│    ├─ [FIRST TICK] refreshRiskControls() → drawdown/throttle state │
 │    ├─ [FIRST TICK] fetchLessonForDate(yesterday) → lessons_learned  │
 │    ├─ fetchNiftyTrendContext() → EMA + VWAP from Mongo NIFTY50     │
+│    ├─ buildMarketRegimeSnapshot() → NIFTY change + breadth         │
 │    ├─ fetchTodayNewsContext() → live headlines                      │
 │    └─ for each ticker in active_watchlist:                          │
 │         ├─ checkLiveExits() → ATR-based stop/target/trail          │
@@ -49,6 +51,10 @@
 │               ├─ [GATE 2] Strategy auto-gate (rolling PF/WR)        │
 │               │   isStrategyAllowed() → skip if PF<0.8 or WR<30%  │
 │               │                                                     │
+│               ├─ [GATE 3] Hard institutional risk gates             │
+│               │   time window + drawdown + sector/side/correlation  │
+│               │   + gross/beta exposure + NIFTY/breadth             │
+│               │                                                     │
 │               ├─ [SHADOW] Layer-1 veto candidate (optional)         │
 │               │   evaluate volume z-score + ATR%                    │
 │               │   log PASS/BLOCK + counterfactual decision          │
@@ -58,10 +64,11 @@
 │                    ├─ embedCandlePattern() → 1536-dim vector        │
 │                    ├─ querySimilarPatterns() → Pinecone top-8       │
 │                    │                                                │
-│                    ├─ [GATE 3] Pinecone auto-approve                │
-│                    │   score ≥ 0.92 + WIN? → auto-approve (no LLM) │
+│                    ├─ [GATE 4] Pinecone consensus auto-approve      │
+│                    │   ≥3 same-strategy neighbors above 0.85        │
+│                    │   and weighted win rate ≥60% → skip LLM       │
 │                    │                                                │
-│                    ├─ computeQty(atr, confidence) → position size   │
+│                    ├─ computeSizing(atr, gates) → position size      │
 │                    │   riskPerTrade = equity × 0.01                 │
 │                    │   qty = riskPerTrade / (ATR × 1.5) × confMult │
 │                    │                                                │
@@ -69,7 +76,7 @@
 │                    ├─ buildIndicators() → RSI, ATR, VWAP dist, VZ  │
 │                    ├─ getStrategyTrackRecord() → WR/PF string       │
 │                    │                                                │
-│                    ├─ [GATE 4] callJudgeModel() → Claude Sonnet 4  │
+│                    ├─ [GATE 5] callJudgeModel() → Claude Sonnet 4  │
 │                    │   [SIGNAL] strategy | ticker | setup           │
 │                    │   [PRICE ACTION] last 5 candles O/H/L/C/V     │
 │                    │   [INDICATORS] RSI, ATR, VWAP dist, Vol Z     │
@@ -80,7 +87,8 @@
 │                    │                                                │
 │                    └─ approve? → placePaperOrder() → MongoDB trades │
 │                                 stores: qty, atr_at_entry, ai_conf, │
-│                                 shadow_eval (when enabled)          │
+│                                 risk_eval, market_eval, sizing_eval │
+│                                 shadow_eval, partial_exits          │
 │                                                                     │
 │  IST 15:15  SQUARE_OFF → closeIntraday() for all tickers           │
 │                                                                     │
@@ -115,7 +123,7 @@
 │    └─ for each IST weekday in [from, to]:                           │
 │         └─ load dayBars from MongoDB ohlc_1m                        │
 │              └─ for each 1m bar (chronological):                    │
-│                   ├─ checkExitOnBar() → ATR-based stop/target/trail │
+│                   ├─ checkExitOnBar() → partial exits + ATR trail   │
 │                   │   → insertBacktestTrade() with full PnL         │
 │                   │                                                 │
 │                   └─ (every stepMinutes) runScanningPass()          │
@@ -310,9 +318,9 @@ All 14 strategies are enabled by default. The strategy auto-gate (`strategyTrack
 
 ---
 
-## Signal Pipeline (4 Gates + Shadow Layer)
+## Signal Pipeline (5 Gates + Shadow Layer)
 
-Every trigger must pass through four production gates before an order fires. A shadow layer-1 veto can run in observe-only mode for calibration.
+Every trigger must pass through five production gates before an order fires. A shadow layer-1 veto can run in observe-only mode for calibration.
 
 ```
 TriggerHit[]
@@ -326,21 +334,29 @@ TriggerHit[]
     │  isStrategyAllowed() → false if PF < 0.8 or WR < 30% over last 20 trades
     │  minimum 10 trades required before gating kicks in
     │
-    ▼ SHADOW LAYER 1 (optional)
+    ▼ GATE 3: Hard Institutional Risk Gate
+    │  evaluateTimeWindow(strategy, ts)
+    │  evaluateSafety(daily/3d/weekly drawdown + open count)
+    │  evaluateMarketRegime(NIFTY change + breadth)
+    │  evaluatePortfolioRisk(sector/side/correlation/exposure)
+    │  blocked decisions persist with risk_eval + market_eval
+    │
+    ▼ SHADOW: Layer-1 Veto Candidate
     │  evaluate volume z-score + ATR% thresholds
     │  record PASS/BLOCK + counterfactual two-layer decision in trades.shadow_eval
     │  enforce only when SHADOW_EVAL_ENFORCE_LAYER1=true
     │
-    ▼ GATE 3: Pinecone Pattern Gate
+    ▼ GATE 4: Pinecone Pattern Gate
     │  embedCandlePattern(last 30 1m bars) → 1536-dim vector
     │  querySimilarPatterns(top-8, date filter = before today)
-    │  if topScore ≥ 0.92 and outcome=WIN → auto-approve (skip LLM)
-    │  else → pass to Gate 4 with pattern summary context
+    │  require at least 3 neighbors above 0.85, same strategy,
+    │  weighted win rate ≥60%, with sector/regime weight boosts
+    │  else → pass to Gate 5 with pattern summary context
     │
-    ▼ GATE 4: LLM Judge (Claude Sonnet 4)
+    ▼ GATE 5: LLM Judge (Claude Sonnet 4)
        Enriched structured prompt (7 sections)
        → {approve: bool, confidence: 0-1, reasoning: string}
-       approve=true + dailyPnL > -DAILY_STOP_LOSS + openCount < MAX_CONCURRENT
+       approve=true + hard gates still clear
        → ATR-based qty calc → placePaperOrder()
 ```
 
@@ -348,17 +364,17 @@ TriggerHit[]
 
 ## ATR-Based Position Sizing
 
-Position size adapts to each stock's actual volatility (ATR) and the judge's confidence:
+Position size adapts to each stock's actual volatility (ATR), then applies risk and market multipliers. Judge confidence does not increase size unless `CONFIDENCE_SIZING_ENABLED=true`.
 
 ```
 riskPerTrade = ACCOUNT_EQUITY × RISK_PER_TRADE_PCT  // e.g., ₹5,000
 stopDistance = ATR(14) × ATR_STOP_MULTIPLE          // e.g., ₹15 × 1.5 = ₹22.50
 baseQty      = floor(riskPerTrade / stopDistance)   // e.g., floor(5000/22.50) = 222
-confMult     = clamp(0.5 + confidence × 1.5, 0.5, 2.0)
-qty          = clamp(floor(baseQty × confMult), MIN_QTY, MAX_QTY)
+confMult     = CONFIDENCE_SIZING_ENABLED ? clamp(0.5 + confidence × factor, 0.5, 1.3) : 1
+qty          = clamp(floor(baseQty × confMult × riskMult × marketMult), MIN_QTY, MAX_QTY)
 ```
 
-Stored in the trade document: `qty`, `atr_at_entry`. Used by exit simulator for accurate PnL: `pnl = (exitPrice - entryPrice) × qty`.
+Stored in the trade document: `qty`, `atr_at_entry`, `sizing_eval`. Used by exit simulator for accurate PnL.
 
 ---
 
@@ -369,8 +385,9 @@ Exits adapt to each stock's volatility rather than using fixed percentages:
 ```
 // Live exits (checkLiveExits in ExecutionEngine)
 stopDist    = pos.atrAtEntry × ATR_STOP_MULTIPLE      // 1.5x ATR
-targetDist  = pos.atrAtEntry × ATR_TARGET_MULTIPLE    // 2.5x ATR
-trailTrigger = pos.atrAtEntry × ATR_TRAIL_TRIGGER_MULTIPLE // 1.0x ATR
+scale1      = 33% at pos.atrAtEntry × 1.0
+scale2      = 33% at pos.atrAtEntry × 2.0
+trailTrigger = pos.atrAtEntry × ATR_TRAIL_TRIGGER_MULTIPLE // runner trail
 trailDist   = pos.atrAtEntry × ATR_TRAIL_DIST_MULTIPLE // 0.75x ATR
 
 // Fallback when ATR unavailable
@@ -378,7 +395,7 @@ stopDist    = entryPrice × EXIT_STOP_PCT   // 1.2%
 targetDist  = entryPrice × EXIT_TARGET_PCT // 2.0%
 ```
 
-The `SimPosition` in backtest also carries `atrAtEntry` so exit simulation uses the same ATR-adaptive logic.
+The `SimPosition` in backtest carries `remainingQty`, partial exits, realized partial PnL, and `atrAtEntry` so replay uses the same ATR-adaptive scale-out logic.
 
 ---
 
@@ -419,7 +436,7 @@ News: RBI holds rates | FII inflows continue | IT earnings beat
 Returns: `{approve: bool, confidence: 0–1, reasoning: string}`
 
 **Cost optimization — the Pinecone gate:**
-If the top Pinecone neighbor has cosine similarity ≥ 0.92 AND outcome = WIN, the trade is auto-approved without calling the LLM. After `weekend-optimize` fills Pinecone, most trades in familiar regimes skip the judge entirely.
+Pinecone auto-approval now requires consensus: at least 3 same-strategy neighbors above 0.85 similarity and weighted win rate ≥60%. Same-sector and same-vol-regime matches carry more weight. Single winning neighbors no longer auto-approve trades.
 
 **Judge cooldown:** 5 minutes **per strategy per ticker** in live mode (each strategy on each ticker gets its own independent cooldown, so multiple strategies on the same ticker don't block each other).
 
@@ -473,6 +490,12 @@ Index: `{ticker, ts}` unique + `{ts: -1}`
   "technical_snapshot": { "rsi": 58, "z_score_vwap": 1.2, ... },
   "ai_confidence": 0.87,
   "ai_reasoning": "Strong ORB with volume confirmation...",
+  "risk_eval": { "allowed": true, "sector": "Oil Gas & Consumable Fuels", "gross_exposure_pct": 0.42 },
+  "market_eval": { "allowed": true, "nifty_change_pct": 0.4, "breadth_green_ratio": 0.58 },
+  "sizing_eval": { "base_qty": 222, "final_qty": 111, "risk_multiplier": 1, "market_multiplier": 0.5 },
+  "partial_exits": [
+    { "ts": ISODate, "price": 2516.7, "qty": 73, "reason": "SCALE_1", "pnl": 1109, "pnl_percent": 0.61, "remaining_qty": 149 }
+  ],
   "shadow_eval": {
     "enabled": true,
     "layer1_decision": "BLOCK",
@@ -541,11 +564,13 @@ Index: `{ticker, ts}` unique + `{ts: -1}`
   "pnl_percent": 2.43,
   "date": "2026-03-15",
   "ticker": "RELIANCE",
-  "strategy": "MINED"
+  "strategy": "MINED",
+  "sector": "Oil Gas & Consumable Fuels",
+  "vol_regime": "MID"
 }
 ```
 
-**Query logic:** embed current candle pattern → query top-8 → filter similarity ≥ 0.72 → compute pWin = wins/total → pass to judge as context. If top score ≥ 0.92 + WIN → auto-approve (no LLM call).
+**Query logic:** embed current candle pattern → query top-8 → filter causal neighbors in backtest → pass summary to judge. Live auto-approval requires consensus: at least 3 same-strategy neighbors above 0.85 and weighted win rate ≥60%; same-sector and same-vol-regime neighbors receive higher weight.
 
 ---
 

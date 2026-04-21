@@ -15,6 +15,8 @@ function flatMeta(m: PatternMeta): Record<string, string | number | boolean> {
     date: String(m.date),
     ...(m.ticker !== undefined ? { ticker: String(m.ticker) } : {}),
     ...(m.strategy !== undefined ? { strategy: String(m.strategy) } : {}),
+    ...(m.sector !== undefined ? { sector: String(m.sector) } : {}),
+    ...(m.vol_regime !== undefined ? { vol_regime: String(m.vol_regime) } : {}),
   };
 }
 
@@ -86,6 +88,8 @@ export async function querySimilarPatterns(
         date: String(md.date ?? ""),
         ticker: md.ticker !== undefined ? String(md.ticker) : undefined,
         strategy: md.strategy !== undefined ? String(md.strategy) : undefined,
+        sector: md.sector !== undefined ? String(md.sector) : undefined,
+        vol_regime: md.vol_regime !== undefined ? String(md.vol_regime) : undefined,
       },
     };
   });

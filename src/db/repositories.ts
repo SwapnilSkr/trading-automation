@@ -99,6 +99,21 @@ export async function updateTradeExit(
   );
 }
 
+export async function updateTradePartialExits(
+  tradeId: ObjectId,
+  partialExits: NonNullable<TradeLogDoc["partial_exits"]>
+): Promise<void> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  await c.updateOne(
+    { _id: tradeId },
+    {
+      $set: {
+        partial_exits: partialExits,
+      },
+    }
+  );
+}
+
 export async function insertBacktestTrade(doc: TradeLogDoc): Promise<void> {
   const c = await col<TradeLogDoc>(collections.tradesBacktest);
   await c.insertOne(doc);
@@ -183,6 +198,20 @@ export async function tradesForDay(istDate: string): Promise<TradeLogDoc[]> {
     .find({ entry_time: { $gte: start, $lte: end } })
     .sort({ entry_time: 1 })
     .toArray();
+}
+
+export async function fetchExecutedTradesSince(
+  from: Date,
+  executionEnv?: TradeLogDoc["env"]
+): Promise<TradeLogDoc[]> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const filter: Record<string, unknown> = {
+    entry_time: { $gte: from },
+    order_executed: true,
+    "result.pnl": { $exists: true },
+  };
+  if (executionEnv) filter.env = executionEnv;
+  return c.find(filter).sort({ entry_time: 1 }).toArray();
 }
 
 /**

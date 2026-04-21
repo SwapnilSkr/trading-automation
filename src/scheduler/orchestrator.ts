@@ -11,6 +11,7 @@ import { syncIntradayHistory, syncOhlcForRange } from "../services/marketSync.js
 import { runDiscoverySync } from "../services/discoveryRun.js";
 import { runPreopenPivot } from "../services/preopenPivot.js";
 import { fetchNiftyTrendContext } from "../services/niftyTrend.js";
+import { buildMarketRegimeSnapshot } from "../risk/marketRegime.js";
 import { env } from "../config/env.js";
 import {
   istDateString,
@@ -92,6 +93,7 @@ export class TradingOrchestrator {
         if (this.sessionInitDoneForDay !== todayStr) {
           this.sessionInitDoneForDay = todayStr;
           await this.engine.refreshStrategyHealth();
+          await this.engine.refreshRiskControls();
           if (env.lessonsFeedbackEnabled) {
             const yesterday = istDateString(nowIST().minus({ days: 1 }));
             const lesson = await fetchLessonForDate(yesterday);
@@ -108,6 +110,7 @@ export class TradingOrchestrator {
         const end = nowIST().toJSDate();
         const watch = await resolveWatchlistTickers();
         await this.maybeSyncExecutionBars(watch, end);
+        const marketSnapshot = await buildMarketRegimeSnapshot(watch, end);
         for (const ticker of watch) {
           let candles = await fetchOhlcRange(ticker, day, end);
           if (candles.length < 30) {
@@ -123,6 +126,7 @@ export class TradingOrchestrator {
             last5m,
             niftyTrendHint: niftyTrend,
             newsHeadlines: news,
+            marketSnapshot,
           });
         }
         if (env.executionEnv === "LIVE") {

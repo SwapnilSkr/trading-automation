@@ -59,6 +59,44 @@ export interface TradeLogDoc extends Document {
   technical_snapshot: TechnicalSnapshot;
   ai_confidence: number;
   ai_reasoning: string;
+  risk_eval?: {
+    allowed: boolean;
+    reasons: string[];
+    sector?: string;
+    beta?: number;
+    open_position_count?: number;
+    same_sector_positions?: number;
+    same_side_positions?: number;
+    gross_exposure_pct?: number;
+    beta_exposure_pct?: number;
+    max_correlation?: number;
+    throttle_multiplier?: number;
+  };
+  market_eval?: {
+    allowed: boolean;
+    reasons: string[];
+    nifty_change_pct?: number;
+    breadth_green_ratio?: number;
+    size_multiplier?: number;
+  };
+  sizing_eval?: {
+    base_qty: number;
+    final_qty: number;
+    confidence_multiplier: number;
+    risk_multiplier: number;
+    market_multiplier: number;
+    stop_distance?: number;
+    confidence_sizing_enabled: boolean;
+  };
+  partial_exits?: Array<{
+    ts: Date;
+    price: number;
+    qty: number;
+    reason: "SCALE_1" | "SCALE_2" | "EOD" | "STOP" | "TRAIL" | "TARGET";
+    pnl: number;
+    pnl_percent: number;
+    remaining_qty: number;
+  }>;
   shadow_eval?: {
     enabled: boolean;
     layer1_decision: "PASS" | "BLOCK";
@@ -114,6 +152,8 @@ export interface PatternMeta {
   date: string;
   ticker?: string;
   strategy?: string;
+  sector?: string;
+  vol_regime?: string;
 }
 
 /** Mongo `active_watchlist` — session performers from discovery-sync */

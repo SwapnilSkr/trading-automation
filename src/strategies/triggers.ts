@@ -11,6 +11,7 @@ import {
 import { detectOrbBreakoutUp } from "../indicators/orb.js";
 import { detectLiquidityGrab, type PriorDayRange } from "../indicators/bigBoy.js";
 import { IST } from "../time/ist.js";
+import { env } from "../config/env.js";
 
 export interface TriggerHit {
   strategy: StrategyId;
@@ -63,6 +64,24 @@ function hasBreakBelow(candles: Ohlc1m[], level: number, tol = 0.0005): boolean 
   return candles.some((c) => c.l < level * (1 - tol));
 }
 
+function recentBreakAbove(
+  candles: Ohlc1m[],
+  level: number,
+  maxBars: number,
+  tol = 0.0005
+): boolean {
+  return hasBreakAbove(candles.slice(-Math.max(1, maxBars)), level, tol);
+}
+
+function recentBreakBelow(
+  candles: Ohlc1m[],
+  level: number,
+  maxBars: number,
+  tol = 0.0005
+): boolean {
+  return hasBreakBelow(candles.slice(-Math.max(1, maxBars)), level, tol);
+}
+
 export function evaluateOrb(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
   const sig = detectOrbBreakoutUp(sessionCandles, 15, 1.5);
   if (!sig) return undefined;
@@ -91,8 +110,17 @@ export function evaluateOrbRetest15m(sessionCandles: Ohlc1m[]): TriggerHit | und
   if (minuteOfBar(last) < OPEN_MIN + 20) return undefined;
 
   const afterOrb = sessionCandles.filter((c) => minuteOfBar(c) > OPEN_MIN + 14);
-  const brokeUp = hasBreakAbove(afterOrb, orb.high);
-  const brokeDown = hasBreakBelow(afterOrb, orb.low);
+  const completedAfterOrb = afterOrb.slice(0, -1);
+  const brokeUp = recentBreakAbove(
+    completedAfterOrb,
+    orb.high,
+    env.retestMaxBarsAfterBreak
+  );
+  const brokeDown = recentBreakBelow(
+    completedAfterOrb,
+    orb.low,
+    env.retestMaxBarsAfterBreak
+  );
 
   const longRetest =
     brokeUp &&
@@ -186,7 +214,7 @@ export function evaluateVwapReclaimReject(sessionCandles: Ohlc1m[]): TriggerHit 
 
   const last = sessionCandles[sessionCandles.length - 1]!;
   const prev = sessionCandles[sessionCandles.length - 2]!;
-  const vw = vwap(sessionCandles.slice(-Math.min(30, sessionCandles.length)));
+  const vw = vwap(sessionCandles);
   const vz = volumeZScore(sessionCandles, 20);
 
   const touchTol = 0.0015;
@@ -223,7 +251,7 @@ export function evaluateVwapPullbackTrend(sessionCandles: Ohlc1m[]): TriggerHit 
 
   const last = sessionCandles[sessionCandles.length - 1]!;
   const prev = sessionCandles[sessionCandles.length - 2]!;
-  const vw = vwap(sessionCandles.slice(-Math.min(40, sessionCandles.length)));
+  const vw = vwap(sessionCandles);
   const e20 = ema(sessionCandles, 20);
   const e50 = ema(sessionCandles, 50);
   if (e20 === undefined || e50 === undefined) return undefined;
@@ -273,7 +301,13 @@ export function evaluatePrevDayBreakRetest(
   const last = sessionCandles[sessionCandles.length - 1]!;
   const prev = sessionCandles[sessionCandles.length - 2]!;
 
-  const brokePdh = hasBreakAbove(sessionCandles.slice(0, -1), pd.pdh, 0.0008);
+  const completed = sessionCandles.slice(0, -1);
+  const brokePdh = recentBreakAbove(
+    completed,
+    pd.pdh,
+    env.retestMaxBarsAfterBreak,
+    0.0008
+  );
   const longRetest = brokePdh && last.l <= pd.pdh * 1.001 && last.c > pd.pdh && last.c > prev.c;
   if (longRetest) {
     return {
@@ -284,7 +318,12 @@ export function evaluatePrevDayBreakRetest(
     };
   }
 
-  const brokePdl = hasBreakBelow(sessionCandles.slice(0, -1), pd.pdl, 0.0008);
+  const brokePdl = recentBreakBelow(
+    completed,
+    pd.pdl,
+    env.retestMaxBarsAfterBreak,
+    0.0008
+  );
   const shortRetest = brokePdl && last.h >= pd.pdl * 0.999 && last.c < pd.pdl && last.c < prev.c;
   if (shortRetest) {
     return {
@@ -305,23 +344,25 @@ export function evaluateEma20BreakRetest(sessionCandles: Ohlc1m[]): TriggerHit |
 
   const last = sessionCandles[sessionCandles.length - 1]!;
   const prev = sessionCandles[sessionCandles.length - 2]!;
+  const vz = volumeZScore(sessionCandles, 20);
+  const volumeOk = vz === undefined || vz >= env.ema20RetestMinVolumeZ;
 
-  const long = prev.c < e20 && last.c > e20 && last.l <= e20 * 1.001;
+  const long = volumeOk && prev.c < e20 && last.c > e20 && last.l <= e20 * 1.001;
   if (long) {
     return {
       strategy: "EMA20_BREAK_RETEST",
       side: "BUY",
-      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c },
+      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c, volume_z: vz },
       hint: "EMA20 bullish reclaim with retest hold",
     };
   }
 
-  const short = prev.c > e20 && last.c < e20 && last.h >= e20 * 0.999;
+  const short = volumeOk && prev.c > e20 && last.c < e20 && last.h >= e20 * 0.999;
   if (short) {
     return {
       strategy: "EMA20_BREAK_RETEST",
       side: "SELL",
-      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c },
+      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c, volume_z: vz },
       hint: "EMA20 bearish break with retest fail",
     };
   }
@@ -334,11 +375,11 @@ export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): Trigg
   const last = sessionCandles[sessionCandles.length - 1]!;
   const last2 = sessionCandles[sessionCandles.length - 2]!;
   const last3 = sessionCandles[sessionCandles.length - 3]!;
-  const vw = vwap(sessionCandles.slice(-Math.min(40, sessionCandles.length)));
+  const vw = vwap(sessionCandles);
   const vz = volumeZScore(sessionCandles, 20) ?? 0;
 
   const crossedUpRecent = last3.c < vw && last2.c > vw;
-  const long = crossedUpRecent && last2.c > vw && last.c > vw && vz > -0.2;
+  const long = crossedUpRecent && last2.c > vw && last.c > vw && vz >= env.vwapContinuationMinVolumeZ;
   if (long) {
     return {
       strategy: "VWAP_RECLAIM_CONTINUATION",
@@ -349,7 +390,7 @@ export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): Trigg
   }
 
   const crossedDownRecent = last3.c > vw && last2.c < vw;
-  const short = crossedDownRecent && last2.c < vw && last.c < vw && vz > -0.2;
+  const short = crossedDownRecent && last2.c < vw && last.c < vw && vz >= env.vwapContinuationMinVolumeZ;
   if (short) {
     return {
       strategy: "VWAP_RECLAIM_CONTINUATION",
@@ -374,8 +415,19 @@ export function evaluateInitialBalanceBreakRetest(sessionCandles: Ohlc1m[]): Tri
   if (minuteOfBar(last) < OPEN_MIN + 65) return undefined;
 
   const afterIb = sessionCandles.filter((c) => minuteOfBar(c) > OPEN_MIN + 59);
-  const brokeUp = hasBreakAbove(afterIb, ib.high, 0.0008);
-  const brokeDown = hasBreakBelow(afterIb, ib.low, 0.0008);
+  const completedAfterIb = afterIb.slice(0, -1);
+  const brokeUp = recentBreakAbove(
+    completedAfterIb,
+    ib.high,
+    env.retestMaxBarsAfterBreak,
+    0.0008
+  );
+  const brokeDown = recentBreakBelow(
+    completedAfterIb,
+    ib.low,
+    env.retestMaxBarsAfterBreak,
+    0.0008
+  );
 
   if (brokeUp && last.l <= ib.high * 1.001 && last.c > ib.high && last.c > prev.c) {
     return {
@@ -542,7 +594,15 @@ export function evaluateOrbFakeoutReversal(sessionCandles: Ohlc1m[]): TriggerHit
   if (minuteOfBar(last) < OPEN_MIN + 25) return undefined;
 
   const postOrb = sessionCandles.filter((c) => minuteOfBar(c) > OPEN_MIN + 14);
-  const fakeoutUp = hasBreakAbove(postOrb, orb.high, 0.0008) && last.c < orb.high && last.c > orb.low;
+  const confirmBars = postOrb.slice(-Math.max(1, env.orbFakeoutConfirmationBars));
+  const confirmedInside = confirmBars.length >= env.orbFakeoutConfirmationBars &&
+    confirmBars.every((c) => c.c < orb.high && c.c > orb.low);
+  const breakLookback = postOrb.slice(0, -Math.max(1, env.orbFakeoutConfirmationBars));
+  const fakeoutUp =
+    hasBreakAbove(breakLookback, orb.high, 0.0008) &&
+    confirmedInside &&
+    last.c < orb.high &&
+    last.c > orb.low;
   if (fakeoutUp) {
     return {
       strategy: "ORB_FAKEOUT_REVERSAL",
@@ -552,7 +612,11 @@ export function evaluateOrbFakeoutReversal(sessionCandles: Ohlc1m[]): TriggerHit
     };
   }
 
-  const fakeoutDown = hasBreakBelow(postOrb, orb.low, 0.0008) && last.c > orb.low && last.c < orb.high;
+  const fakeoutDown =
+    hasBreakBelow(breakLookback, orb.low, 0.0008) &&
+    confirmedInside &&
+    last.c > orb.low &&
+    last.c < orb.high;
   if (fakeoutDown) {
     return {
       strategy: "ORB_FAKEOUT_REVERSAL",

@@ -23,6 +23,7 @@ import {
   applyExecutionFill,
   getBacktestRealismConfig,
 } from "./microstructure.js";
+import { buildMarketRegimeSnapshot } from "../risk/marketRegime.js";
 
 export interface BacktestConfig {
   from: string;
@@ -121,6 +122,7 @@ export async function runBacktestReplay(
         console.warn(`[Backtest] ${dayKey} no watchlist_snapshots — fallback static list`);
       }
     }
+    const marketSnapshotCache = new Map<number, BacktestPassOptions["marketSnapshot"]>();
 
     for (const ticker of dayTickers) {
       const broker = config.skipOrders ? new AngelOneStubBroker() : createBroker();
@@ -174,6 +176,10 @@ export async function runBacktestReplay(
                 ticker,
                 entryPrice: fill.fillPrice,
                 qty: p.qty,
+                remainingQty: p.qty,
+                realizedPnl: 0,
+                partialExits: [],
+                completedPartialReasons: [],
                 entryReferencePrice: ref,
                 entrySlippageRupees: fill.slippageRupees,
                 side: p.side,
@@ -215,6 +221,11 @@ export async function runBacktestReplay(
 
         const last5m = aggregateLastNMinutes(sessionCandles, 5);
         const newsHeadlines = await getHeadlinesForBacktest(bar.ts);
+        let marketSnapshot = marketSnapshotCache.get(bar.ts.getTime());
+        if (env.marketGateEnabled && !marketSnapshotCache.has(bar.ts.getTime())) {
+          marketSnapshot = await buildMarketRegimeSnapshot(dayTickers, bar.ts);
+          marketSnapshotCache.set(bar.ts.getTime(), marketSnapshot);
+        }
 
         // Capture newly entered trades so we can simulate exits
         const newEntries: {
@@ -232,6 +243,13 @@ export async function runBacktestReplay(
           persistBacktest: false, // we handle persistence below
           runId,
           skipJudge: config.skipJudge,
+          marketSnapshot,
+          portfolioPositions: openPositions.map((p) => ({
+            ticker: p.ticker,
+            side: p.side,
+            entryPrice: p.entryPrice,
+            qty: p.remainingQty,
+          })),
           onTradeEntry: async (doc, entryPrice, side) => {
             const qty = doc.qty ?? env.backtestPositionQty;
             newEntries.push({

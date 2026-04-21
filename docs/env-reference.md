@@ -57,10 +57,18 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `LIVE_EXEC_SYNC_INTERVAL_MINUTES` | `15` | Interval between execution-time auto-sync passes |
 | `LIVE_EXEC_SYNC_LOOKBACK_MINUTES` | `120` | Lookback window used per execution-time auto-sync pass |
 | `LIVE_EXEC_TICKER_RESYNC_COOLDOWN_MINUTES` | `15` | Per-ticker cooldown for rescue sync when bars are insufficient |
-| `PINECONE_GATE_ENABLED` | `true` | Auto-approve from Pinecone without LLM if top match ≥ threshold |
-| `PINECONE_GATE_MIN_SCORE` | `0.92` | Cosine similarity threshold for auto-approval (lower = more auto-approvals, higher = stricter) |
+| `PINECONE_GATE_ENABLED` | `true` | Auto-approve from Pinecone without LLM only when consensus rules pass |
+| `PINECONE_GATE_MIN_SCORE` | `0.92` | Legacy single-neighbor score retained for compatibility; consensus settings now control approval |
+| `PINECONE_GATE_MIN_NEIGHBORS` | `3` | Minimum strong neighbors required before Pinecone can auto-approve |
+| `PINECONE_GATE_CONSENSUS_MIN_SCORE` | `0.85` | Minimum score for a neighbor to count in consensus |
+| `PINECONE_GATE_MIN_WIN_RATE` | `0.6` | Minimum weighted win rate across strong neighbors |
+| `PINECONE_GATE_REQUIRE_SAME_STRATEGY` | `true` | If true, only same-strategy neighbors count |
+| `PINECONE_GATE_SAME_SECTOR_WEIGHT` | `1.2` | Weight boost for same-sector neighbors |
+| `PINECONE_GATE_SAME_REGIME_WEIGHT` | `1.1` | Weight boost for same-vol-regime neighbors |
 
 **Cost estimation (live):** With 10 tickers, 5-min cooldown per strategy per ticker, 14 strategies → most are suppressed by gates. Expect 3–10 LLM calls/day at Claude Sonnet 4 prices (~$0.003/call = pennies/day).
+
+Pinecone note: `weekend-optimize` mines generic `strategy=MINED` vectors for judge context. With `PINECONE_GATE_REQUIRE_SAME_STRATEGY=true`, those generic vectors do not auto-approve trades by themselves.
 
 **Judge prompt structure:** The judge receives a structured multi-section prompt:
 - `[SIGNAL]` — strategy, ticker, side, setup description
@@ -114,12 +122,39 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `EXECUTION_ENV` | `PAPER` | `PAPER` = log only, `LIVE` = real Angel orders |
-| `DAILY_STOP_LOSS` | `25000` | Kill switch: stop all trading if daily PnL ≤ -₹25,000 |
+| `DAILY_STOP_LOSS` | `15000` | Kill switch: stop all trading if daily PnL ≤ -₹15,000 |
 | `MAX_CONCURRENT_TRADES` | `5` | Max open positions at once |
 | `WATCHED_TICKERS` | `RELIANCE,TCS,INFY` | Fallback tickers when active_watchlist is empty |
 | `TRADING_TICKER_SOURCE` | `active_watchlist` | `env` = use WATCHED_TICKERS, `active_watchlist` = use Mongo discovery list |
+| `MAX_SECTOR_POSITIONS` | `2` | Hard cap for open positions in one sector |
+| `MAX_SAME_SIDE_POSITIONS` | `3` | Hard cap for simultaneous BUY or SELL positions |
+| `MAX_CORRELATION_WITH_OPEN` | `0.7` | Blocks a new ticker if rolling return correlation with any open ticker exceeds this |
+| `CORRELATION_LOOKBACK_DAYS` | `20` | Daily-return lookback used for correlation checks |
+| `MAX_GROSS_EXPOSURE_PCT` | `1.5` | Gross notional exposure cap vs `ACCOUNT_EQUITY` |
+| `MAX_BETA_EXPOSURE_PCT` | `2.0` | Beta-weighted notional exposure cap vs `ACCOUNT_EQUITY` |
+| `ROLLING_3D_DRAWDOWN_LIMIT` | `40000` | Hard stop if last 3 sessions' realized PnL ≤ -₹40,000 |
+| `WEEKLY_DRAWDOWN_LIMIT` | `50000` | Hard stop if last 7 calendar days' realized PnL ≤ -₹50,000 |
+| `CONSECUTIVE_LOSS_THROTTLE` | `3` | After this many realized losses, size is throttled |
+| `LOSS_THROTTLE_SIZE_MULTIPLIER` | `0.5` | Qty multiplier while consecutive-loss throttle is active |
+| `MARKET_GATE_ENABLED` | `true` | Enable NIFTY/breadth hard gate |
+| `MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT` | `-1.0` | Blocks long breakout strategies when NIFTY change is below/equal this |
+| `MARKET_BLOCK_LONG_BREAKOUTS_BREADTH` | `0.3` | Blocks long breakout strategies when watchlist green ratio is below this |
+| `MARKET_WEAK_NIFTY_PCT` | `-0.5` | Weak-market threshold for size reduction |
+| `MARKET_WEAK_BREADTH` | `0.4` | Weak-breadth threshold for size reduction |
+| `MARKET_WEAK_SIZE_MULTIPLIER` | `0.5` | Qty multiplier in weak market conditions |
+| `TIME_WINDOWS_ENABLED` | `true` | Enable strategy-specific fresh-entry windows |
+| `NO_FRESH_ENTRIES_AFTER` | `14:30` | Blocks new entries after this IST time |
+| `ORB_ENTRY_START` / `ORB_ENTRY_END` | `09:30` / `11:30` | ORB and fakeout windows |
+| `VWAP_ENTRY_START` / `VWAP_ENTRY_END` | `10:00` / `14:00` | VWAP and EMA windows |
+| `MEAN_REV_ENTRY_START` / `MEAN_REV_ENTRY_END` | `10:00` / `14:30` | Mean-reversion window |
+| `EMA20_RETEST_MIN_VOLUME_Z` | `0` | EMA20 break/retest minimum volume z-score |
+| `VWAP_CONTINUATION_MIN_VOLUME_Z` | `0.5` | VWAP continuation minimum volume z-score |
+| `RETEST_MAX_BARS_AFTER_BREAK` | `20` | Break/retest must happen within this many bars |
+| `ORB_FAKEOUT_CONFIRMATION_BARS` | `2` | ORB fakeout reversal requires this many inside-range confirmation closes |
 
 Execution note: with `LIVE_EXEC_SYNC_ENABLED=true`, the daemon no longer depends on post-market `SYNC` alone for intraday bars; it performs periodic top-up sync during EXECUTION and on-demand ticker rescue sync when bar count is insufficient.
+
+Ticker metadata note: sector caps use `data/ind_nifty100list.csv`; beta exposure uses `data/ticker_metadata.json` overrides and defaults unknown beta to `1.0`.
 
 ---
 
@@ -130,8 +165,8 @@ Position size is computed dynamically from ATR to risk a fixed fraction of accou
 ```
 riskPerTrade = ACCOUNT_EQUITY × RISK_PER_TRADE_PCT
 baseQty      = floor(riskPerTrade / (ATR × ATR_STOP_MULTIPLE))
-confMult     = clamp(0.5 + confidence × CONFIDENCE_SCALE_FACTOR, 0.5, 2.0)
-qty          = clamp(floor(baseQty × confMult), MIN_QTY_PER_TRADE, MAX_QTY_PER_TRADE)
+confMult     = CONFIDENCE_SIZING_ENABLED ? clamp(0.5 + confidence × factor, 0.5, CONFIDENCE_MULTIPLIER_MAX) : 1
+qty          = clamp(floor(baseQty × confMult × riskMult × marketMult), MIN_QTY_PER_TRADE, MAX_QTY_PER_TRADE)
 ```
 
 | Variable | Default | Notes |
@@ -148,12 +183,14 @@ qty          = clamp(floor(baseQty × confMult), MIN_QTY_PER_TRADE, MAX_QTY_PER_
 | `ATR_EXITS_ENABLED` | `true` | Use ATR-based stop/target/trail (false = fixed %) |
 | `ATR_SIZING_ENABLED` | `true` | Use ATR-based qty calc (false = fixed `BACKTEST_POSITION_QTY`) |
 | `CONFIDENCE_SCALE_FACTOR` | `1.5` | Scales judge confidence into position size multiplier |
+| `CONFIDENCE_SIZING_ENABLED` | `false` | If false, confidence approves/denies but does not boost size |
+| `CONFIDENCE_MULTIPLIER_MAX` | `1.3` | Max confidence multiplier when confidence sizing is enabled |
 
-**Example:** RELIANCE at ₹2500 with ATR(14) = ₹15.
+**Example with confidence sizing explicitly enabled:** RELIANCE at ₹2500 with ATR(14) = ₹15.
 - `stopDistance = 15 × 1.5 = ₹22.50`
 - `baseQty = 5000 / 22.50 = 222 shares`
-- Judge confidence = 0.8: `confMult = clamp(0.5 + 0.8×1.5, 0.5, 2.0) = 1.70`
-- `qty = floor(222 × 1.70) = 377 shares` → capped at `MAX_QTY_PER_TRADE`
+- Judge confidence = 0.8: `confMult = clamp(0.5 + 0.8×1.5, 0.5, 1.3) = 1.30`
+- `qty = floor(222 × 1.30) = 288 shares` → capped at `MAX_QTY_PER_TRADE`
 
 ---
 
@@ -166,6 +203,11 @@ qty          = clamp(floor(baseQty × confMult), MIN_QTY_PER_TRADE, MAX_QTY_PER_
 | `EXIT_TRAIL_TRIGGER_PCT` | `0.008` | Fallback trailing stop activates when 0.8% in profit |
 | `EXIT_TRAIL_DIST_PCT` | `0.005` | Fallback trailing stop distance: 0.5% below peak |
 | `BACKTEST_POSITION_QTY` | `25` | Fallback position size when `ATR_SIZING_ENABLED=false` |
+| `PARTIAL_EXITS_ENABLED` | `true` | Scale out before final trailing runner when ATR is available |
+| `PARTIAL_EXIT_1_ATR_MULTIPLE` | `1.0` | First scale-out target |
+| `PARTIAL_EXIT_1_QTY_PCT` | `0.33` | First scale-out size |
+| `PARTIAL_EXIT_2_ATR_MULTIPLE` | `2.0` | Second scale-out target |
+| `PARTIAL_EXIT_2_QTY_PCT` | `0.33` | Second scale-out size |
 
 ### Strategy Toggles
 

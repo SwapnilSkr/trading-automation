@@ -20,6 +20,8 @@ import {
 import { IST, istDateString } from "../time/ist.js";
 import { runHybridBacktest } from "../backtest/hybridBacktest.js";
 import { runCli } from "./runCli.js";
+import { getTickerSector } from "../market/tickerMetadata.js";
+import { classifyVolRegimeFromCandles } from "../market/volRegime.js";
 
 const LOOKBACK_MIN = 30;
 const MOVE_THRESHOLD = 0.02;
@@ -175,6 +177,8 @@ async function mineGoldenPatterns(
           date: candles[i]!.ts.toISOString().slice(0, 10),
           ticker,
           strategy: "MINED",
+          sector: getTickerSector(ticker),
+          vol_regime: classifyVolRegimeFromCandles(pre),
         },
       });
     }

@@ -6,11 +6,22 @@ import {
   type BacktestRealismConfig,
 } from "../backtest/microstructure.js";
 import { env } from "../config/env.js";
+import {
+  getPartialExitPlan,
+  partialTargetHit,
+  partialTargetPrice,
+  plannedPartialQty,
+  type PartialExitReason,
+} from "./partialExits.js";
 
 export interface SimPosition {
   ticker: string;
   entryPrice: number;
   qty: number;
+  remainingQty: number;
+  realizedPnl: number;
+  partialExits: NonNullable<TradeLogDoc["partial_exits"]>;
+  completedPartialReasons: PartialExitReason[];
   entryReferencePrice?: number;
   entrySlippageRupees?: number;
   side: "BUY" | "SELL";
@@ -55,9 +66,11 @@ export function checkExitOnBar(
   const stopDist = useAtr
     ? pos.atrAtEntry! * env.atrStopMultiple
     : pos.entryPrice * stopPct;
-  const targetDist = useAtr
-    ? pos.atrAtEntry! * env.atrTargetMultiple
-    : pos.entryPrice * targetPct;
+  const targetDist = env.partialExitsEnabled && useAtr
+    ? Infinity
+    : useAtr
+      ? pos.atrAtEntry! * env.atrTargetMultiple
+      : pos.entryPrice * targetPct;
   const trailTriggerDist = useAtr
     ? pos.atrAtEntry! * env.atrTrailTriggerMultiple
     : pos.entryPrice * trailTriggerPct;
@@ -138,6 +151,63 @@ export function checkExitOnBar(
   return { result: { exited: false }, updatedPeak: peak };
 }
 
+function applyPartialExitsOnBar(
+  pos: SimPosition,
+  bar: Ohlc1m,
+  params: ExitParams
+): SimPosition {
+  if (!env.partialExitsEnabled || !pos.atrAtEntry || pos.atrAtEntry <= 0) {
+    return pos;
+  }
+
+  let next = { ...pos, partialExits: [...pos.partialExits], completedPartialReasons: [...pos.completedPartialReasons] };
+  for (const step of getPartialExitPlan()) {
+    if (next.completedPartialReasons.includes(step.reason)) continue;
+    const target = partialTargetPrice(
+      next.side,
+      next.entryPrice,
+      next.atrAtEntry!,
+      step.atrMultiple
+    );
+    if (!partialTargetHit(next.side, bar.h, bar.l, target)) continue;
+    const qty = plannedPartialQty(next.qty, next.remainingQty, step.qtyPct);
+    if (qty <= 0) {
+      next.completedPartialReasons.push(step.reason);
+      continue;
+    }
+
+    const closeSide: "BUY" | "SELL" = next.side === "BUY" ? "SELL" : "BUY";
+    const fill = applyExecutionFill(target, closeSide, bar, qty, params.realism);
+    const grossPnl =
+      next.side === "BUY"
+        ? (fill.fillPrice - next.entryPrice) * qty
+        : (next.entryPrice - fill.fillPrice) * qty;
+    const charges = computeIntradayCharges(
+      next.side,
+      next.entryPrice,
+      fill.fillPrice,
+      qty,
+      params.realism
+    );
+    const netPnl = grossPnl - charges.total;
+    const netPct = netPnl / Math.max(1e-9, next.entryPrice * qty);
+    next.remainingQty = Math.max(0, next.remainingQty - qty);
+    next.realizedPnl += netPnl;
+    next.completedPartialReasons.push(step.reason);
+    next.partialExits.push({
+      ts: bar.ts,
+      price: parseFloat(fill.fillPrice.toFixed(2)),
+      qty,
+      reason: step.reason,
+      pnl: parseFloat(netPnl.toFixed(2)),
+      pnl_percent: parseFloat((netPct * 100).toFixed(3)),
+      remaining_qty: next.remainingQty,
+    });
+    next.doc.partial_exits = next.partialExits;
+  }
+  return next;
+}
+
 /**
  * Run bar-by-bar exit checks for all open positions.
  * Closes positions that hit stop/target and persists the completed trade doc.
@@ -151,34 +221,36 @@ export async function processBarForExits(
 ): Promise<SimPosition[]> {
   const remaining: SimPosition[] = [];
   for (const pos of positions) {
-    const { result, updatedPeak } = checkExitOnBar(pos, bar, params);
+    const withPartials = applyPartialExitsOnBar(pos, bar, params);
+    const { result, updatedPeak } = checkExitOnBar(withPartials, bar, params);
     if (result.exited) {
-      const closeSide: "BUY" | "SELL" = pos.side === "BUY" ? "SELL" : "BUY";
+      const closeSide: "BUY" | "SELL" = withPartials.side === "BUY" ? "SELL" : "BUY";
       const fill = applyExecutionFill(
         result.exitPrice,
         closeSide,
         bar,
-        pos.qty,
+        withPartials.remainingQty,
         params.realism
       );
       const grossPnl =
-        pos.side === "BUY"
-          ? (fill.fillPrice - pos.entryPrice) * pos.qty
-          : (pos.entryPrice - fill.fillPrice) * pos.qty;
+        withPartials.side === "BUY"
+          ? (fill.fillPrice - withPartials.entryPrice) * withPartials.remainingQty
+          : (withPartials.entryPrice - fill.fillPrice) * withPartials.remainingQty;
       const charges = computeIntradayCharges(
-        pos.side,
-        pos.entryPrice,
+        withPartials.side,
+        withPartials.entryPrice,
         fill.fillPrice,
-        pos.qty,
+        withPartials.remainingQty,
         params.realism
       );
-      const netPnl = grossPnl - charges.total;
-      const netPct = netPnl / Math.max(1e-9, pos.entryPrice * pos.qty);
-      const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
+      const netPnl = withPartials.realizedPnl + grossPnl - charges.total;
+      const netPct = netPnl / Math.max(1e-9, withPartials.entryPrice * withPartials.qty);
+      const slippage = (withPartials.entrySlippageRupees ?? 0) + fill.slippageRupees;
       const outcome: TradeOutcome =
         netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";
-      pos.doc.exit_time = bar.ts;
-      pos.doc.result = {
+      withPartials.doc.exit_time = bar.ts;
+      withPartials.doc.partial_exits = withPartials.partialExits;
+      withPartials.doc.result = {
         pnl: parseFloat(netPnl.toFixed(2)),
         slippage: parseFloat(slippage.toFixed(2)),
         outcome,
@@ -187,10 +259,10 @@ export async function processBarForExits(
         charges: parseFloat(charges.total.toFixed(2)),
       };
       if (persist) {
-        await insertBacktestTrade(pos.doc);
+        await insertBacktestTrade(withPartials.doc);
       }
     } else {
-      remaining.push({ ...pos, peakPrice: updatedPeak });
+      remaining.push({ ...withPartials, peakPrice: updatedPeak });
     }
   }
   return remaining;
@@ -205,32 +277,34 @@ export async function closeAllAtEod(
   params: ExitParams,
   persist = true
 ): Promise<void> {
-  for (const pos of positions) {
+  for (const raw of positions) {
+    const pos = applyPartialExitsOnBar(raw, lastBar, params);
     const closeSide: "BUY" | "SELL" = pos.side === "BUY" ? "SELL" : "BUY";
     const fill = applyExecutionFill(
       lastBar.c,
       closeSide,
       lastBar,
-      pos.qty,
+      pos.remainingQty,
       params.realism
     );
     const grossPnl =
       pos.side === "BUY"
-        ? (fill.fillPrice - pos.entryPrice) * pos.qty
-        : (pos.entryPrice - fill.fillPrice) * pos.qty;
+        ? (fill.fillPrice - pos.entryPrice) * pos.remainingQty
+        : (pos.entryPrice - fill.fillPrice) * pos.remainingQty;
     const charges = computeIntradayCharges(
       pos.side,
       pos.entryPrice,
       fill.fillPrice,
-      pos.qty,
+      pos.remainingQty,
       params.realism
     );
-    const netPnl = grossPnl - charges.total;
+    const netPnl = pos.realizedPnl + grossPnl - charges.total;
     const netPct = netPnl / Math.max(1e-9, pos.entryPrice * pos.qty);
     const slippage = (pos.entrySlippageRupees ?? 0) + fill.slippageRupees;
     const outcome: TradeOutcome =
       netPct > 0.001 ? "WIN" : netPct < -0.001 ? "LOSS" : "BREAKEVEN";
     pos.doc.exit_time = lastBar.ts;
+    pos.doc.partial_exits = pos.partialExits;
     pos.doc.result = {
       pnl: parseFloat(netPnl.toFixed(2)),
       slippage: parseFloat(slippage.toFixed(2)),
