@@ -9,6 +9,7 @@ import type {
 import { SmartApiPaths } from "./smartApi/endpoints.js";
 import { SmartApiHttp, decodeJwtExpMs, type SmartApiJson } from "./smartApi/http.js";
 import { generateTotpCode } from "./smartApi/totp.js";
+import { lookupEquityFromScripMaster } from "./scripMaster.js";
 import { IST } from "../time/ist.js";
 
 interface LoginData {
@@ -54,6 +55,8 @@ export class AngelOneBroker implements BrokerClient {
   private positionsCache:
     | { atMs: number; rows: BrokerPosition[] }
     | undefined;
+  /** Throttle rare `searchScrip` fallback calls (master file covers EQ symbols) */
+  private lastSearchScripAtMs = 0;
 
   constructor() {
     this.http = new SmartApiHttp(
@@ -307,6 +310,25 @@ export class AngelOneBroker implements BrokerClient {
         return resolved;
       }
     }
+
+    const fromMaster = await lookupEquityFromScripMaster(
+      env.angelExchange,
+      baseNorm
+    );
+    if (fromMaster) {
+      this.symbolCache.set(key, fromMaster);
+      return fromMaster;
+    }
+
+    const gap = env.angelSearchScripMinGapMs;
+    if (gap > 0) {
+      const now = Date.now();
+      const wait = this.lastSearchScripAtMs + gap - now;
+      if (wait > 0) {
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+    this.lastSearchScripAtMs = Date.now();
 
     const res = await this.http.post(
       SmartApiPaths.searchScrip,

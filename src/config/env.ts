@@ -77,6 +77,33 @@ export const env = {
   angelMacAddress: process.env.ANGEL_MAC_ADDRESS ?? "00:00:00:00:00:00",
   angelExchange: process.env.ANGEL_EXCHANGE ?? "NSE",
 
+  /**
+   * Local symbol resolution from Angel’s OpenAPIScripMaster (avoids per-ticker `searchScrip`).
+   * Default is Angel’s public instrument file (~daily updates).
+   */
+  angelScripMasterUrl:
+    process.env.ANGEL_SCRIP_MASTER_URL ??
+    "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
+  /** Optional path to a downloaded OpenAPIScripMaster.json (skips URL fetch when set) */
+  angelScripMasterPath: process.env.ANGEL_SCRIP_MASTER_PATH ?? "",
+  /** Override cache path for downloaded master JSON (default: OS temp dir, hashed by URL) */
+  angelScripMasterCachePath: process.env.ANGEL_SCRIP_MASTER_CACHE_PATH ?? "",
+  /** Re-download master when cache file is older than this (hours) */
+  angelScripMasterMaxAgeHours: num("ANGEL_SCRIP_MASTER_MAX_AGE_HOURS", 24),
+  /** Minimum gap between `searchScrip` calls when local master misses (fallback only) */
+  angelSearchScripMinGapMs: num("ANGEL_SEARCH_SCRIP_MIN_GAP_MS", 450),
+
+  /**
+   * Global SmartAPI client (`SmartApiHttp`): all `post`/`get` are serialized through one queue
+   * so parallel callers cannot burst past Angel limits. Optional minimum idle time after each
+   * response before the next request starts (0 = only serialization, no extra delay).
+   */
+  angelHttpMinGapMs: num("ANGEL_HTTP_MIN_GAP_MS", 0),
+  /** Retries when SmartAPI returns HTTP 403 (often rate limit); 0 disables */
+  angelHttp403Retries: num("ANGEL_HTTP_403_RETRIES", 2),
+  /** Base backoff for 403 retries (ms); multiplied by 2^attempt */
+  angelHttp403RetryBaseMs: num("ANGEL_HTTP_403_RETRY_BASE_MS", 1500),
+
   /** Pause between `getCandleData` chunk requests to avoid Angel rate limits (403) */
   angelApiThrottleMs: num("ANGEL_API_THROTTLE_MS", 450),
   /** Extra pause between tickers during `sync-history` */
