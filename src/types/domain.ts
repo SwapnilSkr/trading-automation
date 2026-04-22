@@ -88,6 +88,7 @@ export interface TradeLogDoc extends Document {
     risk_multiplier: number;
     market_multiplier: number;
     stop_distance?: number;
+    max_notional_qty?: number;
     confidence_sizing_enabled: boolean;
   };
   partial_exits?: Array<{

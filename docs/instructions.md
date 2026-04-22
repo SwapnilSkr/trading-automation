@@ -50,6 +50,7 @@ bun run ops
 This opens the interactive operator console. Use it to:
 
 - Check whether a date has its watchlist snapshot, news, OHLC bars, analyst lesson, and replay rows.
+- See a live decision funnel (`total -> risk veto -> cooldown -> other deny -> executed`) for the selected day.
 - See which recent trading days are incomplete (backlog audit) and why.
 - Prepare or repair today if you started late.
 - Replay/backtest a missed day.

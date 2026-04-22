@@ -65,7 +65,7 @@ import {
   type PortfolioPosition,
 } from "../risk/portfolioRisk.js";
 import { evaluateTimeWindow } from "../risk/timeWindow.js";
-import { getTickerSector } from "../market/tickerMetadata.js";
+import { getTickerMetadata, getTickerSector } from "../market/tickerMetadata.js";
 import { classifyVolRegimeFromCandles } from "../market/volRegime.js";
 import {
   getPartialExitPlan,
@@ -130,6 +130,7 @@ interface SizingDecision {
   riskMultiplier: number;
   marketMultiplier: number;
   stopDistance?: number;
+  maxNotionalQty?: number;
 }
 
 export class ExecutionEngine {
@@ -137,6 +138,8 @@ export class ExecutionEngine {
   private openCount = 0;
   /** Live: last time we ran judge or Pinecone gate for this strategy:ticker */
   private lastJudgeByStrategyTicker = new Map<string, number>();
+  /** Live: last hard risk veto time for this strategy:ticker */
+  private lastRiskVetoByStrategyTicker = new Map<string, number>();
   /** Live paper positions tracked for stop/target management */
   private livePositions = new Map<string, LivePosition>();
   /** Rolling strategy performance (loaded once per session start) */
@@ -199,11 +202,25 @@ export class ExecutionEngine {
     riskMultiplier: number,
     marketMultiplier: number
   ): SizingDecision {
+    const maxNotionalQty =
+      entryPrice > 0 && env.maxNotionalPerTradePct > 0
+        ? Math.max(
+            1,
+            Math.floor(
+              (env.accountEquity * env.maxNotionalPerTradePct) / entryPrice
+            )
+          )
+        : undefined;
+    const qtyCap =
+      maxNotionalQty !== undefined
+        ? Math.min(env.maxQtyPerTrade, maxNotionalQty)
+        : env.maxQtyPerTrade;
+
     if (!env.atrSizingEnabled || !atrValue || atrValue <= 0) {
       const baseQty = env.backtestPositionQty;
       const qty = Math.max(
         env.minQtyPerTrade,
-        Math.min(env.maxQtyPerTrade, Math.floor(baseQty * riskMultiplier * marketMultiplier))
+        Math.min(qtyCap, Math.floor(baseQty * riskMultiplier * marketMultiplier))
       );
       return {
         qty,
@@ -211,6 +228,7 @@ export class ExecutionEngine {
         confidenceMultiplier: 1,
         riskMultiplier,
         marketMultiplier,
+        maxNotionalQty,
       };
     }
     const riskPerTrade = env.accountEquity * env.riskPerTradePct;
@@ -223,6 +241,7 @@ export class ExecutionEngine {
         riskMultiplier,
         marketMultiplier,
         stopDistance,
+        maxNotionalQty,
       };
     }
     const baseQty = Math.floor(riskPerTrade / stopDistance);
@@ -239,12 +258,13 @@ export class ExecutionEngine {
       baseQty * confMultiplier * riskMultiplier * marketMultiplier
     );
     return {
-      qty: Math.max(env.minQtyPerTrade, Math.min(env.maxQtyPerTrade, qty)),
+      qty: Math.max(env.minQtyPerTrade, Math.min(qtyCap, qty)),
       baseQty,
       confidenceMultiplier: confMultiplier,
       riskMultiplier,
       marketMultiplier,
       stopDistance,
+      maxNotionalQty,
     };
   }
 
@@ -607,7 +627,51 @@ export class ExecutionEngine {
       }
     }
 
-    for (const hit of gatedTriggers) {
+    let executableTriggers = gatedTriggers;
+    if (!backtest && gatedTriggers.length > 0) {
+      const positions = this.openPositionsForRisk();
+      const sameSideCounts = positions.reduce(
+        (acc, p) => {
+          if (p.side === "BUY") acc.buy += 1;
+          else acc.sell += 1;
+          return acc;
+        },
+        { buy: 0, sell: 0 }
+      );
+      const grossNotional = positions.reduce(
+        (s, p) => s + Math.abs(p.entryPrice * p.qty),
+        0
+      );
+      const betaNotional = positions.reduce((s, p) => {
+        const beta = Math.abs(getTickerMetadata(p.ticker).beta);
+        return s + Math.abs(p.entryPrice * p.qty) * beta;
+      }, 0);
+      const grossCap = Math.max(1, env.accountEquity * env.maxGrossExposurePct);
+      const betaCap = Math.max(1, env.accountEquity * env.maxBetaExposurePct);
+      const noExposureHeadroom = grossNotional >= grossCap || betaNotional >= betaCap;
+
+      executableTriggers = gatedTriggers.filter((t) => {
+        if (noExposureHeadroom) return false;
+        if (t.side === "BUY" && sameSideCounts.buy >= env.maxSameSidePositions) {
+          return false;
+        }
+        if (t.side === "SELL" && sameSideCounts.sell >= env.maxSameSidePositions) {
+          return false;
+        }
+        return true;
+      });
+      if (
+        env.liveDebugScans &&
+        executableTriggers.length < gatedTriggers.length &&
+        gatedTriggers.length > 0
+      ) {
+        console.log(
+          `[PreFilter] ${ticker} dropped ${gatedTriggers.length - executableTriggers.length}/${gatedTriggers.length} candidates (portfolio headroom)`
+        );
+      }
+    }
+
+    for (const hit of executableTriggers) {
       await this.maybeExecute(ticker, hit, {
         niftyTrendHint,
         newsHeadlines,
@@ -639,16 +703,60 @@ export class ExecutionEngine {
   ): Promise<void> {
     const nowMs = backtest?.simulatedAt.getTime() ?? Date.now();
     const strategyTickerKey = `${hit.strategy}:${ticker}`;
-    if (
-      !backtest &&
-      nowMs - (this.lastJudgeByStrategyTicker.get(strategyTickerKey) ?? 0) < env.judgeCooldownMs
-    ) {
-      if (env.liveDebugScans) {
-        console.log(
-          `[Decision] ${ticker} ${hit.strategy} rejected: cooldown active`
-        );
+    const selectedJudgeModel =
+      backtest?.judgeModel ??
+      (backtest ? env.judgeModelBacktest : env.judgeModel);
+
+    if (!backtest) {
+      const judgeLastAt = this.lastJudgeByStrategyTicker.get(strategyTickerKey) ?? 0;
+      const judgeElapsed = nowMs - judgeLastAt;
+      if (judgeElapsed < env.judgeCooldownMs) {
+        const remaining = env.judgeCooldownMs - judgeElapsed;
+        if (env.liveDebugScans) {
+          console.log(
+            `[Decision] ${ticker} ${hit.strategy} rejected: judge cooldown active (${Math.ceil(
+              remaining / 1000
+            )}s)`
+          );
+        }
+        await insertTrade({
+          ticker,
+          entry_time: new Date(nowMs),
+          strategy: hit.strategy as StrategyId,
+          env: env.executionEnv,
+          order_executed: false,
+          technical_snapshot: normalizeSnapshot(hit.snapshot),
+          ai_model: selectedJudgeModel,
+          ai_confidence: 0,
+          ai_reasoning: `COOLDOWN_JUDGE: active ${Math.ceil(remaining / 1000)}s`,
+        });
+        return;
       }
-      return;
+
+      const vetoLastAt = this.lastRiskVetoByStrategyTicker.get(strategyTickerKey) ?? 0;
+      const vetoElapsed = nowMs - vetoLastAt;
+      if (vetoElapsed < env.riskVetoRetryCooldownMs) {
+        const remaining = env.riskVetoRetryCooldownMs - vetoElapsed;
+        if (env.liveDebugScans) {
+          console.log(
+            `[Decision] ${ticker} ${hit.strategy} rejected: risk-veto cooldown active (${Math.ceil(
+              remaining / 1000
+            )}s)`
+          );
+        }
+        await insertTrade({
+          ticker,
+          entry_time: new Date(nowMs),
+          strategy: hit.strategy as StrategyId,
+          env: env.executionEnv,
+          order_executed: false,
+          technical_snapshot: normalizeSnapshot(hit.snapshot),
+          ai_model: selectedJudgeModel,
+          ai_confidence: 0,
+          ai_reasoning: `COOLDOWN_RISK_VETO: active ${Math.ceil(remaining / 1000)}s`,
+        });
+        return;
+      }
     }
 
     const entryTime = backtest?.simulatedAt ?? new Date();
@@ -657,9 +765,6 @@ export class ExecutionEngine {
     const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
     const volZValue = volumeZScore(ctx.sessionCandles, 20);
     const side: "BUY" | "SELL" = hit.side;
-    const selectedJudgeModel =
-      backtest?.judgeModel ??
-      (backtest ? env.judgeModelBacktest : env.judgeModel);
     const snap = normalizeSnapshot(hit.snapshot);
     const safetyEval = evaluateSafety(this.safety, this.openCount);
     const timeEval = evaluateTimeWindow(hit.strategy, entryTime);
@@ -714,6 +819,7 @@ export class ExecutionEngine {
         risk_multiplier: preliminarySizing.riskMultiplier,
         market_multiplier: preliminarySizing.marketMultiplier,
         stop_distance: preliminarySizing.stopDistance,
+        max_notional_qty: preliminarySizing.maxNotionalQty,
         confidence_sizing_enabled: env.confidenceSizingEnabled,
       },
       ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
@@ -721,7 +827,7 @@ export class ExecutionEngine {
 
     if (hardGateReasons.length > 0) {
       baseDoc.ai_reasoning = `RISK_VETO: ${hardGateReasons.join("; ")}`;
-      if (!backtest) this.lastJudgeByStrategyTicker.set(strategyTickerKey, nowMs);
+      if (!backtest) this.lastRiskVetoByStrategyTicker.set(strategyTickerKey, nowMs);
       if (!backtest && env.liveDebugScans) {
         console.log(
           `[Risk] ${ticker} ${hit.strategy} ${side} blocked: ${hardGateReasons.join("; ")}`
@@ -869,6 +975,7 @@ export class ExecutionEngine {
         risk_multiplier: sizing.riskMultiplier,
         market_multiplier: sizing.marketMultiplier,
         stop_distance: sizing.stopDistance,
+        max_notional_qty: sizing.maxNotionalQty,
         confidence_sizing_enabled: env.confidenceSizingEnabled,
       },
     };

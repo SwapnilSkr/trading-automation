@@ -70,8 +70,8 @@ export async function loadStrategyHealth(): Promise<Map<StrategyId, StrategyHeal
       const profitFactor =
         sumLoss > 0 ? sumWin / sumLoss : sumWin > 0 ? Infinity : 0;
 
-      // Need minimum trades before gating kicks in
-      const hasEnoughData = tradeCount >= 10;
+      // Need minimum sample size before gating kicks in
+      const hasEnoughData = tradeCount >= env.strategyGateMinTrades;
       const pfOk = !hasEnoughData || profitFactor >= env.strategyGateMinPf;
       const wrOk = !hasEnoughData || winRate >= env.strategyGateMinWinRate;
       const allowed = pfOk && wrOk;

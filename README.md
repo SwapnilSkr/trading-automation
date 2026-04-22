@@ -326,6 +326,7 @@ ATR_TARGET_MULTIPLE=2.5       # target at 2.5x ATR above entry
 ATR_TRAIL_TRIGGER_MULTIPLE=1.0 # activate trail after 1.0x ATR profit
 ATR_TRAIL_DIST_MULTIPLE=0.75  # trail 0.75x ATR below peak
 MAX_QTY_PER_TRADE=500         # cap: never buy more than 500 shares
+MAX_NOTIONAL_PER_TRADE_PCT=0.25 # cap notional per trade at 25% of equity
 MIN_QTY_PER_TRADE=1           # floor: always at least 1 share
 CONFIDENCE_SCALE_FACTOR=1.5   # used only when CONFIDENCE_SIZING_ENABLED=true
 CONFIDENCE_SIZING_ENABLED=false # false = confidence approves/denies only, no size boost
@@ -389,6 +390,7 @@ BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL=true
 # Strategy auto-gate (rolling performance filter)
 STRATEGY_AUTO_GATE_ENABLED=true
 STRATEGY_GATE_WINDOW=20       # evaluate over last 20 trades
+STRATEGY_GATE_MIN_TRADES=40   # don't disable until enough closed-trade sample
 STRATEGY_GATE_MIN_PF=0.8      # disable if profit factor < 0.8
 STRATEGY_GATE_MIN_WIN_RATE=0.3 # disable if win rate < 30%
 
@@ -399,6 +401,7 @@ VOL_REGIME_HIGH_MIN_PCT=0.22  # above 0.22% realized vol = HIGH
 
 # Judge cost control
 JUDGE_COOLDOWN_MS=300000      # 5 min between judge calls per strategy per ticker
+RISK_VETO_RETRY_COOLDOWN_MS=60000 # 1 min retry wait after hard risk veto
 LIVE_SKIP_JUDGE=false         # true => bypass LLM judge (technical-only)
 PINECONE_GATE_MIN_SCORE=0.92  # legacy; consensus settings above control auto-approval
 JUDGE_MODEL=deepseek/deepseek-chat

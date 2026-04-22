@@ -179,6 +179,8 @@ export const env = {
 
   /** Min ms between judge (or Pinecone-gate) decisions per ticker — live only */
   judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 5 * 60 * 1000),
+  /** Retry cooldown for strategy:ticker pairs blocked by hard risk veto */
+  riskVetoRetryCooldownMs: num("RISK_VETO_RETRY_COOLDOWN_MS", 60 * 1000),
   /** If true, bypass judge in live daemon and auto-approve technical triggers */
   liveSkipJudge: process.env.LIVE_SKIP_JUDGE === "true",
   /** If true, print per-scan trigger and judge decision logs in live daemon */
@@ -370,6 +372,8 @@ export const env = {
   atrTrailDistMultiple: num("ATR_TRAIL_DIST_MULTIPLE", 0.75),
   /** Max shares per single trade (cap regardless of ATR calc) */
   maxQtyPerTrade: num("MAX_QTY_PER_TRADE", 500),
+  /** Max per-trade notional as fraction of equity (0.25 = 25% of equity) */
+  maxNotionalPerTradePct: num("MAX_NOTIONAL_PER_TRADE_PCT", 0.25),
   /** Min shares per trade (floor) */
   minQtyPerTrade: num("MIN_QTY_PER_TRADE", 1),
   /** Enable ATR-based dynamic exits (false = use fixed % exits) */
@@ -395,6 +399,8 @@ export const env = {
   strategyAutoGateEnabled: bool("STRATEGY_AUTO_GATE_ENABLED", true),
   /** Rolling trade window for strategy performance evaluation */
   strategyGateWindow: num("STRATEGY_GATE_WINDOW", 20),
+  /** Minimum closed-trade sample before strategy auto-gate can disable */
+  strategyGateMinTrades: num("STRATEGY_GATE_MIN_TRADES", 40),
   /** Minimum profit factor to keep strategy active (below this → disabled) */
   strategyGateMinPf: num("STRATEGY_GATE_MIN_PF", 0.8),
   /** Minimum win rate (0-1) to keep strategy active */

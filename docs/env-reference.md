@@ -73,6 +73,7 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `OPS_AI_MODEL` | `google/gemma-4-31b-it:free` | Model used by `bun run ops-ai` |
 | `OPS_MISSING_TRADING_DAYS_LOOKBACK` | `10` | `ops` audits this many recent trading days for missing artifacts and repair queue |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
+| `RISK_VETO_RETRY_COOLDOWN_MS` | `60000` (1 min) | Min retry wait after a hard `RISK_VETO` for the same strategy+ticker |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
 | `LIVE_DEBUG_SCANS` | `true` | Print per-ticker scan/decision logs in EXECUTION mode (very useful for understanding why trades fire or don't) |
 | `SHADOW_EVAL_ENABLED` | `false` | Log layer-1/layer-2/final/counterfactual decisions into `trades.shadow_eval` (observe-only mode) |
@@ -201,7 +202,9 @@ Position size is computed dynamically from ATR to risk a fixed fraction of accou
 riskPerTrade = ACCOUNT_EQUITY × RISK_PER_TRADE_PCT
 baseQty      = floor(riskPerTrade / (ATR × ATR_STOP_MULTIPLE))
 confMult     = CONFIDENCE_SIZING_ENABLED ? clamp(0.5 + confidence × factor, 0.5, CONFIDENCE_MULTIPLIER_MAX) : 1
-qty          = clamp(floor(baseQty × confMult × riskMult × marketMult), MIN_QTY_PER_TRADE, MAX_QTY_PER_TRADE)
+qtyRaw       = floor(baseQty × confMult × riskMult × marketMult)
+qtyCap       = min(MAX_QTY_PER_TRADE, floor((ACCOUNT_EQUITY × MAX_NOTIONAL_PER_TRADE_PCT) / entryPrice))
+qty          = clamp(qtyRaw, MIN_QTY_PER_TRADE, qtyCap)
 ```
 
 | Variable | Default | Notes |
@@ -214,6 +217,7 @@ qty          = clamp(floor(baseQty × confMult × riskMult × marketMult), MIN_Q
 | `ATR_TRAIL_TRIGGER_MULTIPLE` | `1.0` | Activate trailing stop after 1.0× ATR profit |
 | `ATR_TRAIL_DIST_MULTIPLE` | `0.75` | Trail 0.75× ATR below peak |
 | `MAX_QTY_PER_TRADE` | `500` | Hard cap on shares per trade |
+| `MAX_NOTIONAL_PER_TRADE_PCT` | `0.25` | Hard notional cap per trade as fraction of equity |
 | `MIN_QTY_PER_TRADE` | `1` | Floor for shares per trade |
 | `ATR_EXITS_ENABLED` | `true` | Use ATR-based stop/target/trail (false = fixed %) |
 | `ATR_SIZING_ENABLED` | `true` | Use ATR-based qty calc (false = fixed `BACKTEST_POSITION_QTY`) |
@@ -269,12 +273,13 @@ All 14 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_
 
 ## Strategy Auto-Gate (Rolling Performance Filter)
 
-Automatically disables strategies whose recent live performance falls below thresholds. Requires at least 10 trades before gating kicks in (avoids early disabling due to small sample).
+Automatically disables strategies whose recent live performance falls below thresholds. Requires a minimum sample size before gating kicks in (avoids small-sample overreaction).
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `STRATEGY_AUTO_GATE_ENABLED` | `true` | Enable automatic strategy disabling |
 | `STRATEGY_GATE_WINDOW` | `20` | Rolling trade window for evaluation |
+| `STRATEGY_GATE_MIN_TRADES` | `40` | Minimum closed trades before strategy can be disabled |
 | `STRATEGY_GATE_MIN_PF` | `0.8` | Disable strategy if profit factor < 0.8 |
 | `STRATEGY_GATE_MIN_WIN_RATE` | `0.3` | Disable strategy if win rate < 30% |
 

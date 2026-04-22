@@ -75,11 +75,21 @@ interface DailyStatus {
   coverage: CoverageRow[];
   operatorRuns: OperatorRunDoc[];
   missingDays: MissingDayStatus[];
+  decisionFunnel: DecisionFunnel;
 }
 
 interface MissingDayStatus {
   date: string;
   reasons: string[];
+}
+
+interface DecisionFunnel {
+  total: number;
+  executed: number;
+  riskVeto: number;
+  cooldownJudge: number;
+  cooldownRiskVeto: number;
+  judgeDenyOrOther: number;
 }
 
 interface SentinelSuggestion {
@@ -369,6 +379,7 @@ async function loadDailyStatus(date: string): Promise<DailyStatus> {
     .limit(10)
     .toArray();
   const missingDays = await loadMissingTradingDays(date);
+  const decisionFunnel = computeDecisionFunnel(trades);
   return {
     date,
     snapshot,
@@ -382,6 +393,44 @@ async function loadDailyStatus(date: string): Promise<DailyStatus> {
     coverage: await loadCoverage(tickers, date),
     operatorRuns,
     missingDays,
+    decisionFunnel,
+  };
+}
+
+function computeDecisionFunnel(trades: TradeLogDoc[]): DecisionFunnel {
+  let executed = 0;
+  let riskVeto = 0;
+  let cooldownJudge = 0;
+  let cooldownRiskVeto = 0;
+  let judgeDenyOrOther = 0;
+
+  for (const t of trades) {
+    if (t.order_executed === true) {
+      executed += 1;
+      continue;
+    }
+    const reason = t.ai_reasoning ?? "";
+    if (reason.startsWith("RISK_VETO:")) {
+      riskVeto += 1;
+      continue;
+    }
+    if (reason.startsWith("COOLDOWN_JUDGE:")) {
+      cooldownJudge += 1;
+      continue;
+    }
+    if (reason.startsWith("COOLDOWN_RISK_VETO:")) {
+      cooldownRiskVeto += 1;
+      continue;
+    }
+    judgeDenyOrOther += 1;
+  }
+  return {
+    total: trades.length,
+    executed,
+    riskVeto,
+    cooldownJudge,
+    cooldownRiskVeto,
+    judgeDenyOrOther,
   };
 }
 
@@ -454,6 +503,9 @@ function printStatus(s: DailyStatus): void {
   console.log(`  news_archive:       ${statusLabel(s.newsArchiveCount > 0)} (${s.newsArchiveCount} docs)`);
   console.log(`  ohlc_1m coverage:   ${covered}/${s.coverage.length} tickers >=30 bars, total bars=${totalBars}`);
   console.log(`  live trades:        entries=${executed.length} exits=${exited} pnl=${pnl.toFixed(2)}`);
+  console.log(
+    `  decision funnel:    total=${s.decisionFunnel.total} exec=${s.decisionFunnel.executed} risk_veto=${s.decisionFunnel.riskVeto} cooldown(j/r)=${s.decisionFunnel.cooldownJudge}/${s.decisionFunnel.cooldownRiskVeto} deny_other=${s.decisionFunnel.judgeDenyOrOther}`
+  );
   console.log(`  analyst lesson:     ${statusLabel(s.lessonPresent)}`);
   console.log(`  backtest rows:      ${s.backtestTrades}${s.latestBacktestRun ? ` latest=${s.latestBacktestRun}` : ""}`);
 
