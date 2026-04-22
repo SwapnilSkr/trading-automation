@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { DateTime } from "luxon";
@@ -98,6 +98,7 @@ type MainMenuAction =
   | "refresh"
   | "suggested"
   | "judge-cooldown"
+  | "daemon-control"
   | "repair-missing-days"
   | "change-date"
   | "prepare"
@@ -129,6 +130,11 @@ const MAIN_MENU: MenuEntry[] = [
     action: "judge-cooldown",
     label: "Judge cooldown status",
     aliases: ["cooldown", "judge-cooldown", "jc"],
+  },
+  {
+    action: "daemon-control",
+    label: "Daemon control (status / kill / start fresh)",
+    aliases: ["daemon", "dctl", "restart-daemon"],
   },
   {
     action: "repair-missing-days",
@@ -612,7 +618,7 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `repair`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
@@ -620,17 +626,114 @@ function printHelp(): void {
   console.log("  1            # refresh status");
   console.log("  2            # run suggested action (sentinel)");
   console.log("  3            # judge cooldown status");
-  console.log("  4            # repair missing days (guided)");
-  console.log("  5            # change date context");
-  console.log("  7            # replay selected date");
-  console.log("  8            # replay custom range");
+  console.log("  4            # daemon control");
+  console.log("  5            # repair missing days (guided)");
+  console.log("  6            # change date context");
+  console.log("  8            # replay selected date");
+  console.log("  9            # replay custom range");
   console.log("  replay       # same as replay selected date");
   console.log("  range        # same as replay custom range");
   console.log("  repair       # same as repair missing days");
   console.log("  cooldown     # same as judge cooldown status");
+  console.log("  daemon       # same as daemon control");
   console.log("  date         # same as change date");
   console.log("  sentinel     # same as option 2");
   console.log("  help");
+}
+
+interface DaemonProc {
+  pid: number;
+  command: string;
+}
+
+function listDaemonProcesses(): DaemonProc[] {
+  const out = spawnSync("ps", ["-axo", "pid=,command="], {
+    encoding: "utf8",
+  });
+  if ((out.status ?? 1) !== 0) return [];
+  const lines = (out.stdout ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const procs: DaemonProc[] = [];
+  for (const line of lines) {
+    const firstSpace = line.indexOf(" ");
+    if (firstSpace <= 0) continue;
+    const pidRaw = line.slice(0, firstSpace).trim();
+    const command = line.slice(firstSpace + 1).trim();
+    const pid = Number(pidRaw);
+    if (!Number.isFinite(pid) || pid <= 0) continue;
+    const isDaemon =
+      command.includes("bun run src/index.ts") || command.includes("bun run start");
+    const isOps = command.includes("src/cli/ops.ts");
+    if (!isDaemon || isOps) continue;
+    procs.push({ pid, command });
+  }
+  return procs;
+}
+
+function killDaemonProcesses(procs: DaemonProc[]): void {
+  if (procs.length === 0) return;
+  for (const p of procs) {
+    try {
+      process.kill(p.pid, "SIGTERM");
+    } catch {
+      // ignore dead pid
+    }
+  }
+  spawnSync("sleep", ["1"]);
+  const still = new Set(listDaemonProcesses().map((p) => p.pid));
+  for (const p of procs) {
+    if (!still.has(p.pid)) continue;
+    try {
+      process.kill(p.pid, "SIGKILL");
+    } catch {
+      // ignore dead pid
+    }
+  }
+}
+
+function startDaemonFresh(): void {
+  const child = spawn("bun", ["run", "start"], {
+    cwd: process.cwd(),
+    env: process.env,
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+async function daemonControl(
+  rl: ReturnType<typeof createInterface>
+): Promise<void> {
+  const procs = listDaemonProcesses();
+  console.log(`\n[ops] daemon processes found: ${procs.length}`);
+  for (const p of procs.slice(0, 20)) {
+    console.log(`  pid=${p.pid} cmd=${p.command}`);
+  }
+  if (procs.length > 20) {
+    console.log(`  ... and ${procs.length - 20} more`);
+  }
+  const action = (
+    await ask(rl, "Action [status/kill/start-fresh/back]", "status")
+  )
+    .trim()
+    .toLowerCase();
+  if (action === "back" || action === "b") return;
+  if (action === "kill") {
+    killDaemonProcesses(procs);
+    console.log(
+      `[ops] kill complete. remaining daemon processes: ${listDaemonProcesses().length}`
+    );
+    return;
+  }
+  if (action === "start-fresh" || action === "start" || action === "restart") {
+    killDaemonProcesses(procs);
+    startDaemonFresh();
+    console.log("[ops] started fresh daemon via `bun run start` in background");
+    return;
+  }
+  console.log("[ops] status only");
 }
 
 async function printJudgeCooldownStatus(): Promise<void> {
@@ -1128,6 +1231,10 @@ async function interactive(date: string): Promise<void> {
       }
       if (action === "judge-cooldown") {
         await printJudgeCooldownStatus();
+        continue;
+      }
+      if (action === "daemon-control") {
+        await daemonControl(rl);
         continue;
       }
       if (action === "change-date") {
