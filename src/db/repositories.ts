@@ -8,6 +8,7 @@ import type {
   NewsArchiveDoc,
   NewsContextDoc,
   Ohlc1m,
+  OperatorRunDoc,
   TradeLogDoc,
   WatchlistSnapshotDoc,
 } from "../types/domain.js";
@@ -50,6 +51,9 @@ export async function ensureIndexes(): Promise<void> {
 
   const ws = await col<WatchlistSnapshotDoc>(collections.watchlistSnapshots);
   await ws.createIndex({ effective_date: 1 }, { unique: true });
+
+  const ops = await col<OperatorRunDoc>(collections.operatorRuns);
+  await ops.createIndex({ date: -1, operation: 1, started_at: -1 });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {

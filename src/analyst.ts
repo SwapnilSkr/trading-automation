@@ -17,6 +17,17 @@ import type { TradeLogDoc } from "./types/domain.js";
 import { istDateString, nowIST } from "./time/ist.js";
 import { runCli } from "./cli/runCli.js";
 
+function parseArgs(): { date: string } {
+  const argv = process.argv.slice(2);
+  let date = istDateString(nowIST().minus({ days: 0 }));
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--date" && argv[i + 1]) {
+      date = argv[++i]!;
+    }
+  }
+  return { date };
+}
+
 function tradeLine(t: TradeLogDoc): string {
   const oc = t.result?.outcome ?? "OPEN";
   const pnl =
@@ -170,7 +181,7 @@ function formatMetricBlock(
 
 async function main(): Promise<void> {
   await ensureIndexes();
-  const date = istDateString(nowIST().minus({ days: 0 }));
+  const { date } = parseArgs();
   const all = await tradesForDay(date);
   const trades = all.filter((t) => t.order_executed !== false);
   const metrics = computeMetrics(trades);

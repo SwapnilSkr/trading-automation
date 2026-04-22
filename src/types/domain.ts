@@ -182,3 +182,13 @@ export interface WatchlistSnapshotDoc extends Document {
   preopen_meta?: Record<string, unknown>;
   created_at: Date;
 }
+
+export interface OperatorRunDoc extends Document {
+  operation: string;
+  date: string;
+  status: "SUCCESS" | "FAILED";
+  started_at: Date;
+  ended_at: Date;
+  details?: Record<string, unknown>;
+  error?: string;
+}

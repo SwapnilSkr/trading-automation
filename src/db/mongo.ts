@@ -32,4 +32,5 @@ export const collections = {
   watchlistSnapshots: "watchlist_snapshots",
   weekendOptimizeCheckpoint: "weekend_optimize_checkpoint",
   pineconeGovernorState: "pinecone_governor_state",
+  operatorRuns: "operator_runs",
 } as const;

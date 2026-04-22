@@ -32,6 +32,8 @@ export class TradingOrchestrator {
   private tickerResyncLastAtMs = new Map<string, number>();
   /** Loaded once when EXECUTION phase starts each day */
   private sessionInitDoneForDay?: string;
+  /** Full-session OHLC top-up done once per EXECUTION day, useful after late starts/restarts. */
+  private fullSessionExecSyncDoneForDay?: string;
 
   constructor(private broker: BrokerClient) {
     this.engine = new ExecutionEngine(broker);
@@ -109,7 +111,10 @@ export class TradingOrchestrator {
         const day = nowIST().startOf("day").toJSDate();
         const end = nowIST().toJSDate();
         const watch = await resolveWatchlistTickers();
-        await this.maybeSyncExecutionBars(watch, end);
+        const forceFullSessionSync =
+          this.fullSessionExecSyncDoneForDay !== todayStr;
+        await this.maybeSyncExecutionBars(watch, end, forceFullSessionSync);
+        if (forceFullSessionSync) this.fullSessionExecSyncDoneForDay = todayStr;
         const marketSnapshot = await buildMarketRegimeSnapshot(watch, end);
         for (const ticker of watch) {
           let candles = await fetchOhlcRange(ticker, day, end);
@@ -225,27 +230,30 @@ export class TradingOrchestrator {
 
   private async maybeSyncExecutionBars(
     tickers: string[],
-    end: Date
+    end: Date,
+    forceFullSession = false
   ): Promise<void> {
     if (!env.liveExecSyncEnabled) return;
     if (tickers.length === 0) return;
     if (this.execSyncRunning) return;
 
     const intervalMs = Math.max(1, env.liveExecSyncIntervalMinutes) * 60_000;
-    if (Date.now() - this.lastExecSyncAtMs < intervalMs) return;
+    if (!forceFullSession && Date.now() - this.lastExecSyncAtMs < intervalMs) return;
 
     this.execSyncRunning = true;
     try {
       const lookbackMins = Math.max(30, env.liveExecSyncLookbackMinutes);
-      const from = nowIST()
-        .minus({ minutes: lookbackMins })
-        .startOf("minute")
-        .toJSDate();
+      const from = forceFullSession
+        ? nowIST().set({ hour: 9, minute: 15, second: 0, millisecond: 0 }).toJSDate()
+        : nowIST()
+            .minus({ minutes: lookbackMins })
+            .startOf("minute")
+            .toJSDate();
       const results = await syncOhlcForRange(this.broker, from, end, tickers);
       const tickersWithBars = results.filter((r) => r.bars > 0).length;
       const totalBars = results.reduce((s, r) => s + r.bars, 0);
       console.log(
-        `[Orchestrator] exec auto-sync: ${tickersWithBars}/${results.length} tickers, bars=${totalBars}`
+        `[Orchestrator] exec auto-sync${forceFullSession ? " full-session" : ""}: ${tickersWithBars}/${results.length} tickers, bars=${totalBars}`
       );
     } catch (e) {
       console.error("[Orchestrator] exec auto-sync failed", e);

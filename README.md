@@ -180,6 +180,7 @@ curl http://127.0.0.1:3000/health
 | Command | What it does |
 |---------|-------------|
 | `bun run start` | Run main daemon once |
+| `bun run ops` | Interactive operator console: daily status, repair, replay, analyst/discovery runs |
 | `bun run dev` | Watch mode (auto-restart on file change) |
 | `bun run typecheck` | TypeScript type check (no emit) |
 | `bun run build` | Bundle all entry points to `dist/` for PM2 |
@@ -215,6 +216,17 @@ bun run discovery-sync -- --refresh-universe     # fetch NSE Nifty 100 CSV → u
 bun run discovery-sync -- --dry-run              # score only, don't write
 bun run discovery-sync -- --skip-ohlc           # score only, skip 1m backfill
 ```
+
+### operator console
+```bash
+bun run ops
+bun run ops -- --status
+bun run ops -- --date 2026-04-21 --status
+bun run ops -- --date 2026-04-21 --prepare
+bun run ops -- --date 2026-04-21 --replay
+```
+
+Use `ops` when you missed part of a day or started late. It shows whether the watchlist snapshot, active watchlist, news, OHLC coverage, analyst lesson, replay rows, and recent operator actions exist for a date. From the menu you can repair the day, sync missing bars, run a replay, run analyst, or run discovery.
 
 ### backtest flags
 ```bash
