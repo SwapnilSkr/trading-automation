@@ -280,6 +280,8 @@ export const env = {
   maxGrossExposurePct: num("MAX_GROSS_EXPOSURE_PCT", 1.5),
   /** Beta-weighted notional exposure cap vs account equity */
   maxBetaExposurePct: num("MAX_BETA_EXPOSURE_PCT", 2.0),
+  /** If true, shrink qty to fit gross/beta exposure headroom before hard-blocking */
+  exposureFitSizingEnabled: bool("EXPOSURE_FIT_SIZING_ENABLED", true),
   /** Rolling 3-session net PnL hard stop */
   rolling3dDrawdownLimit: num("ROLLING_3D_DRAWDOWN_LIMIT", 40_000),
   /** Rolling 7-calendar-day net PnL hard stop */

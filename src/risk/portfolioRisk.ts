@@ -34,6 +34,8 @@ export interface PortfolioRiskEval {
   beta_exposure_pct: number;
   max_correlation?: number;
   throttle_multiplier: number;
+  recommended_qty?: number;
+  exposure_fit_applied?: boolean;
 }
 
 function normalizeTicker(ticker: string): string {
@@ -130,17 +132,52 @@ export async function evaluatePortfolioRisk(
     reasons.push(`same-side cap ${input.side}: ${sameSidePositions}/${env.maxSameSidePositions}`);
   }
 
-  let grossNotional = Math.abs(input.entryPrice * input.qty);
-  let betaNotional = grossNotional * Math.abs(meta.beta);
-  for (const p of positions) {
+  const existingGrossNotional = positions.reduce(
+    (s, p) => s + Math.abs(p.entryPrice * p.qty),
+    0
+  );
+  const existingBetaNotional = positions.reduce((s, p) => {
     const pMeta = getTickerMetadata(p.ticker);
     const notional = Math.abs(p.entryPrice * p.qty);
-    grossNotional += notional;
-    betaNotional += notional * Math.abs(pMeta.beta);
+    return s + notional * Math.abs(pMeta.beta);
+  }, 0);
+
+  const proposedQty = Math.max(0, Math.floor(input.qty));
+  let effectiveQty = proposedQty;
+  let recommendedQty: number | undefined;
+  let exposureFitApplied = false;
+
+  if (env.exposureFitSizingEnabled && proposedQty > 0 && input.entryPrice > 0) {
+    const grossCap = Math.max(1, env.accountEquity * env.maxGrossExposurePct);
+    const betaCap = Math.max(1, env.accountEquity * env.maxBetaExposurePct);
+    const grossHeadroom = Math.max(0, grossCap - existingGrossNotional);
+    const betaHeadroom = Math.max(0, betaCap - existingBetaNotional);
+    const allowedByGross = Math.floor(grossHeadroom / input.entryPrice);
+    const betaUnit = input.entryPrice * Math.max(1e-9, Math.abs(meta.beta));
+    const allowedByBeta = Math.floor(betaHeadroom / betaUnit);
+    const fitQty = Math.max(0, Math.min(proposedQty, allowedByGross, allowedByBeta));
+    if (fitQty < proposedQty) {
+      recommendedQty = fitQty;
+      if (fitQty >= env.minQtyPerTrade) {
+        effectiveQty = fitQty;
+        exposureFitApplied = true;
+      }
+    }
   }
+
+  let grossNotional = existingGrossNotional + Math.abs(input.entryPrice * effectiveQty);
+  let betaNotional = existingBetaNotional + Math.abs(input.entryPrice * effectiveQty) * Math.abs(meta.beta);
 
   const grossExposurePct = grossNotional / Math.max(1, env.accountEquity);
   const betaExposurePct = betaNotional / Math.max(1, env.accountEquity);
+  if (proposedQty < env.minQtyPerTrade) {
+    reasons.push(`qty below minimum: ${proposedQty}<${env.minQtyPerTrade}`);
+  }
+  if (recommendedQty !== undefined && recommendedQty < env.minQtyPerTrade) {
+    reasons.push(
+      `insufficient exposure headroom (fit qty ${recommendedQty}<${env.minQtyPerTrade})`
+    );
+  }
   if (grossExposurePct > env.maxGrossExposurePct) {
     reasons.push(`gross exposure ${(grossExposurePct * 100).toFixed(0)}% > ${(env.maxGrossExposurePct * 100).toFixed(0)}%`);
   }
@@ -176,5 +213,7 @@ export async function evaluatePortfolioRisk(
     beta_exposure_pct: betaExposurePct,
     max_correlation: maxCorrelation,
     throttle_multiplier: input.throttleMultiplier,
+    recommended_qty: recommendedQty,
+    exposure_fit_applied: exposureFitApplied,
   };
 }

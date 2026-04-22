@@ -168,6 +168,7 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `CORRELATION_LOOKBACK_DAYS` | `20` | Daily-return lookback used for correlation checks |
 | `MAX_GROSS_EXPOSURE_PCT` | `1.5` | Gross notional exposure cap vs `ACCOUNT_EQUITY` |
 | `MAX_BETA_EXPOSURE_PCT` | `2.0` | Beta-weighted notional exposure cap vs `ACCOUNT_EQUITY` |
+| `EXPOSURE_FIT_SIZING_ENABLED` | `true` | If true, engine shrinks qty to fit gross/beta headroom before hard-blocking |
 | `ROLLING_3D_DRAWDOWN_LIMIT` | `40000` | Hard stop if last 3 sessions' realized PnL ≤ -₹40,000 |
 | `WEEKLY_DRAWDOWN_LIMIT` | `50000` | Hard stop if last 7 calendar days' realized PnL ≤ -₹50,000 |
 | `CONSECUTIVE_LOSS_THROTTLE` | `3` | After this many realized losses, size is throttled |

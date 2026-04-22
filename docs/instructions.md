@@ -68,6 +68,10 @@ Operator menu quality-of-life:
 - Type aliases like `date`, `replay`, `range`, `prepare`, `analyst`, `help`.
 - After changing date, the CLI asks what you want to do next for that date.
 
+Layman note:
+- If portfolio risk caps are almost full, the system now tries to place a smaller quantity first (fit-to-headroom) before rejecting.
+- In `ops` status, watch the decision funnel line to see if blocks are mostly `risk_veto`, `cooldown`, or `deny_other`.
+
 Quick non-interactive checks:
 
 ```bash

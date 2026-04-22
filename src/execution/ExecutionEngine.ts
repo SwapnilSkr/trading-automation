@@ -814,12 +814,21 @@ export class ExecutionEngine {
       market_eval: marketEval,
       sizing_eval: {
         base_qty: preliminarySizing.baseQty,
-        final_qty: preliminarySizing.qty,
+        final_qty:
+          portfolioEval.recommended_qty !== undefined &&
+          portfolioEval.recommended_qty >= env.minQtyPerTrade
+            ? Math.min(preliminarySizing.qty, portfolioEval.recommended_qty)
+            : preliminarySizing.qty,
         confidence_multiplier: preliminarySizing.confidenceMultiplier,
         risk_multiplier: preliminarySizing.riskMultiplier,
         market_multiplier: preliminarySizing.marketMultiplier,
         stop_distance: preliminarySizing.stopDistance,
         max_notional_qty: preliminarySizing.maxNotionalQty,
+        exposure_fit_qty:
+          portfolioEval.recommended_qty !== undefined &&
+          portfolioEval.recommended_qty >= env.minQtyPerTrade
+            ? portfolioEval.recommended_qty
+            : undefined,
         confidence_sizing_enabled: env.confidenceSizingEnabled,
       },
       ...(backtest?.runId ? { backtest_run_id: backtest.runId } : {}),
@@ -956,13 +965,25 @@ export class ExecutionEngine {
       );
     }
 
-    const sizing = this.computeSizing(
+    const sizingBase = this.computeSizing(
       entryPrice,
       atrValue,
       judge.confidence,
       safetyEval.throttleMultiplier,
       marketEval.size_multiplier
     );
+    const exposureFitQty =
+      portfolioEval.recommended_qty !== undefined &&
+      portfolioEval.recommended_qty >= env.minQtyPerTrade
+        ? portfolioEval.recommended_qty
+        : undefined;
+    const sizing: SizingDecision = {
+      ...sizingBase,
+      qty:
+        exposureFitQty !== undefined
+          ? Math.min(sizingBase.qty, exposureFitQty)
+          : sizingBase.qty,
+    };
     const qty = sizing.qty;
     const doc: TradeLogDoc = {
       ...baseDoc,
@@ -976,6 +997,7 @@ export class ExecutionEngine {
         market_multiplier: sizing.marketMultiplier,
         stop_distance: sizing.stopDistance,
         max_notional_qty: sizing.maxNotionalQty,
+        exposure_fit_qty: exposureFitQty,
         confidence_sizing_enabled: env.confidenceSizingEnabled,
       },
     };

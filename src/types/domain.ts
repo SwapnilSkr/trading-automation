@@ -73,6 +73,8 @@ export interface TradeLogDoc extends Document {
     beta_exposure_pct?: number;
     max_correlation?: number;
     throttle_multiplier?: number;
+    recommended_qty?: number;
+    exposure_fit_applied?: boolean;
   };
   market_eval?: {
     allowed: boolean;
@@ -89,6 +91,7 @@ export interface TradeLogDoc extends Document {
     market_multiplier: number;
     stop_distance?: number;
     max_notional_qty?: number;
+    exposure_fit_qty?: number;
     confidence_sizing_enabled: boolean;
   };
   partial_exits?: Array<{
