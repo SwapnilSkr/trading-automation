@@ -2,6 +2,45 @@
 
 Use this file when you do not remember which command to run.
 
+## Start Live Trading (Simple Steps)
+
+Think of it like this:
+
+- `ops` = your control room (checks and prepares things)
+- `start` = your engine (actual live daemon loop)
+
+Do this every trading day:
+
+1. Open terminal 1 and run:
+
+```bash
+bun run ops
+```
+
+2. In `ops`, choose `Prepare/resume trading for selected date`.
+
+3. Open terminal 2 and start the daemon:
+
+```bash
+bun run start
+```
+
+4. Check health (optional):
+
+```bash
+curl http://127.0.0.1:3000/health
+```
+
+If you use PM2 instead of foreground mode:
+
+```bash
+bun run build
+pm2 start ecosystem.config.cjs
+pm2 logs trading-bot
+```
+
+If you prepared in `ops` and then restarted during market hours, that is fine. The daemon resumes and keeps running its phase loop.
+
 ## Daily Control Panel
 
 ```bash
@@ -130,6 +169,6 @@ If you run `backtest-snapshots` directly with judge enabled, it now prints repla
 
 ```bash
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --judge-model anthropic/claude-sonnet-4.5
-bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missing-news
+bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missing-news # fail when news coverage is missing/weak
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --news-min-headlines 12
 ```

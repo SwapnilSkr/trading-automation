@@ -238,7 +238,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry ru
 # one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --judge-model anthropic/claude-sonnet-4.5
-bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --fail-on-missing-news
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --fail-on-missing-news   # fail when news coverage is missing/weak
 # options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all --judge-model <id> --fail-on-missing-news --news-min-headlines N --no-auto-backfill-news --news-backfill-no-filter
 # run profile comparison on same date range
 bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first

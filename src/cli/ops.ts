@@ -594,7 +594,11 @@ async function replayRange(
     }
     const failOnMissingNews =
       !skipJudge &&
-      (await confirm(rl, "Abort replay if historical news is missing?", false));
+      (await confirm(
+        rl,
+        "Abort replay if historical news coverage is missing/weak?",
+        false
+      ));
     const args = [
       "run",
       "src/cli/backtest-snapshots.ts",

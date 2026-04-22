@@ -129,7 +129,7 @@ Options:
   --no-persist                    do not write trades_backtest
   --force-sync-all                disable coverage precheck and sync every ticker
   --tickers-fallback A,B          fallback if no snapshots in range
-  --fail-on-missing-news          abort when no news_archive docs exist up to --to
+  --fail-on-missing-news          abort when replay news coverage is missing/weak
   --no-auto-backfill-news         don't auto-fetch replay weekday news before run
   --news-min-headlines N          minimum headline count per weekday for replay coverage
   --news-backfill-no-filter       auto-backfill keeps raw ET archive titles (no market keyword filter)
