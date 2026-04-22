@@ -13,8 +13,15 @@ This opens the interactive operator console. Use it to:
 - Check whether a date has its watchlist snapshot, news, OHLC bars, analyst lesson, and replay rows.
 - Prepare or repair today if you started late.
 - Replay/backtest a missed day.
+- Replay/backtest a custom date range directly from the menu.
 - Run analyst for a missed day.
 - Run nightly discovery manually.
+
+Operator menu quality-of-life:
+
+- Press `Enter` to refresh status.
+- Type aliases like `date`, `replay`, `range`, `prepare`, `analyst`, `help`.
+- After changing date, the CLI asks what you want to do next for that date.
 
 Quick non-interactive checks:
 
@@ -22,6 +29,29 @@ Quick non-interactive checks:
 bun run ops -- --status
 bun run ops -- --date 2026-04-21 --status
 ```
+
+## AI Operator CLI (contextual)
+
+```bash
+bun run ops-ai
+bun run ops-ai -- --date 2026-04-21
+```
+
+The AI CLI uses `google/gemma-4-31b-it:free` via your OpenRouter key, reads live Mongo-backed status each turn, and can run contextual actions such as prepare day, replay day, analyst, discovery, and sync.
+
+Examples to type inside `ops-ai`:
+
+- `prepare today so i can resume now`
+- `replay 2026-04-18 with skip judge`
+- `run analyst for 2026-04-18`
+- `show status`
+
+Slash commands:
+
+- `/status`
+- `/date YYYY-MM-DD`
+- `/help`
+- `/exit`
 
 ## If You Start Trading Late
 
@@ -48,6 +78,8 @@ bun run ops -- --date YYYY-MM-DD --replay
 ```
 
 The CLI checks for that day's snapshot and OHLC coverage, offers to repair missing pieces, runs a one-day replay, and can run the analyzer for the replay run.
+If you keep judge enabled, `ops` now also shows whether historical `news_archive` exists before the replay date and lets you override judge model at run time.
+Replay prep now auto-fetches ET archive headlines for replay weekdays by default and deduplicates on upsert, so repeated replays do not accumulate duplicate headlines for the same day.
 
 ## End-Of-Day Analyst
 
@@ -93,3 +125,11 @@ bun run backtest-analyze -- --last
 ```
 
 Prefer `bun run ops -- --date YYYY-MM-DD --replay` for a missed day because it checks prerequisites first.
+
+If you run `backtest-snapshots` directly with judge enabled, it now prints replay config (`skipJudge`, effective judge model) and warns when `news_archive` is empty for the range:
+
+```bash
+bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --judge-model anthropic/claude-sonnet-4.5
+bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missing-news
+bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --news-min-headlines 12
+```

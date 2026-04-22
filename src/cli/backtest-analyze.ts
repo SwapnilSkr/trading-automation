@@ -132,6 +132,18 @@ async function main(): Promise<void> {
 
   const all = await col.find(filter).sort({ entry_time: 1 }).toArray();
   console.log(`  Total records:        ${all.length}  (${all.filter(t => t.result).length} with exit/PnL)`);
+  const modelCounts = new Map<string, number>();
+  for (const t of all) {
+    const m = (t.ai_model ?? "unknown").trim() || "unknown";
+    modelCounts.set(m, (modelCounts.get(m) ?? 0) + 1);
+  }
+  if (modelCounts.size > 0) {
+    const models = [...modelCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([m, n]) => `${m} (${n})`)
+      .join(", ");
+    console.log(`  Judge models:         ${models}`);
+  }
 
   if (all.length === 0) {
     console.log("  No trades found. Run backtest first.");

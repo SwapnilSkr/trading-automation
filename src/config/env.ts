@@ -43,7 +43,9 @@ export const env = {
   /** Judge / simulation (OpenRouter or OpenAI-compatible) */
   openRouterApiKey: () => process.env.OPENROUTER_API_KEY ?? "",
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
-  judgeModel: process.env.JUDGE_MODEL ?? "anthropic/claude-sonnet-4",
+  judgeModel: process.env.JUDGE_MODEL ?? "deepseek/deepseek-chat",
+  /** AI operator CLI planner model */
+  opsAiModel: process.env.OPS_AI_MODEL ?? "google/gemma-4-31b-it:free",
   /** Cheaper model for `bun run backtest` (OpenRouter slug, e.g. Gemini Flash) */
   judgeModelBacktest:
     process.env.JUDGE_MODEL_BACKTEST ?? "google/gemini-2.0-flash-001",
@@ -68,6 +70,12 @@ export const env = {
 
   /** Delay between ET archive day requests (backfill-news-scraper) */
   archiveScraperDelayMs: num("ARCHIVE_SCRAPER_DELAY_MS", 2500),
+  /** Replay: auto-backfill missing/weak `news_archive` days before judge-enabled backtests */
+  backtestNewsAutoBackfill: bool("BACKTEST_NEWS_AUTO_BACKFILL", true),
+  /** Replay: min headlines per weekday in `news_archive`; below this is treated as weak coverage */
+  backtestNewsMinHeadlinesPerDay: num("BACKTEST_NEWS_MIN_HEADLINES_PER_DAY", 8),
+  /** Replay auto-backfill mode: bypass market-keyword filter and keep raw ET archive headlines */
+  backtestNewsAutoBackfillNoFilter: bool("BACKTEST_NEWS_AUTO_BACKFILL_NO_FILTER", false),
 
   angelApiKey: process.env.ANGEL_API_KEY ?? "",
   /** Dashboard secret (UUID); REST login uses API key + PIN + TOTP per SmartAPI docs */

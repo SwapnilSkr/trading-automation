@@ -53,19 +53,19 @@ function loadFileOnce(): void {
  */
 export async function getHeadlinesForBacktest(sim: Date): Promise<string[]> {
   loadFileOnce();
-  const fromMongo = await fetchNewsArchiveHeadlinesBeforeOrAt(sim);
+  const fromMongo = await fetchNewsArchiveHeadlinesBeforeOrAt(sim, 40, true);
   const fromFile = (fileEntries ?? [])
     .filter((e) => e.ts.getTime() <= sim.getTime())
     .sort((a, b) => b.ts.getTime() - a.ts.getTime())
     .flatMap((e) => e.headlines);
 
-  const seen = new Set<string>();
+  const merged = [...fromMongo, ...fromFile].map((h) => h.trim()).filter(Boolean);
   const out: string[] = [];
-  for (const h of [...fromMongo, ...fromFile]) {
-    const t = h.trim();
-    if (!t || seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
+  const seen = new Set<string>();
+  for (const h of merged) {
+    if (seen.has(h)) continue;
+    seen.add(h);
+    out.push(h);
     if (out.length >= 25) break;
   }
   return out;

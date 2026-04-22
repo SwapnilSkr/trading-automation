@@ -54,7 +54,7 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 |----------|---------|-------|
 | `OPENROUTER_API_KEY` | — | Required for live judge |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for local LLM |
-| `JUDGE_MODEL` | `anthropic/claude-sonnet-4` | Live judge (high-quality reasoning, ~$0.003/call) |
+| `JUDGE_MODEL` | `deepseek/deepseek-chat` | Live judge model |
 | `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
@@ -391,10 +391,13 @@ Requires: `TRADING_TICKER_SOURCE=active_watchlist`
 | `SENTINEL_RETRY_BASE_MS` | `700` | Base backoff between retry attempts (jitter added) |
 | `ARCHIVE_SCRAPER_DELAY_MS` | `2500` | Delay between days in `backfill-news-scraper` (rate politeness) |
 | `HISTORICAL_NEWS_PATH` | `data/historical_news.json` | JSON file for backtest news replay |
+| `BACKTEST_NEWS_AUTO_BACKFILL` | `true` | Replay prep auto-fetches ET archive headlines for weekdays in replay range (judge-enabled runs) |
+| `BACKTEST_NEWS_MIN_HEADLINES_PER_DAY` | `8` | Coverage threshold per weekday in `news_archive`; lower counts are flagged weak |
+| `BACKTEST_NEWS_AUTO_BACKFILL_NO_FILTER` | `false` | If `true`, replay auto-backfill keeps raw ET archive titles (no keyword filter) |
 
 ET archive backfill uses the site's `starttime-*` day URLs (not legacy `day-*`, which 404). Scrapers detect soft 404 HTML shells when present.
 
-**Collections:** `news_context` = daily rows for **live** `fetchTodayNewsContext`; filled by `backfill-news-scraper`. **`news_archive`** = `ts` + headlines for **backtest** replay (`getHeadlinesForBacktest`); fill with `backfill-news-scraper --output-archive`, or `backtest --import-news`, or via `HISTORICAL_NEWS_PATH`. See `docs/architecture.md`.
+**Collections:** `news_context` = daily rows for **live** `fetchTodayNewsContext`; filled by `backfill-news-scraper`. **`news_archive`** = `ts` + headlines for **backtest** replay (`getHeadlinesForBacktest`); fill with `backfill-news-scraper --output-archive`, or `backtest --import-news`, or via `HISTORICAL_NEWS_PATH`. Replay auto-backfill upserts with per-day headline dedup, so repeated runs fetch again but won't duplicate existing headlines for that day/source. See `docs/architecture.md`.
 
 ---
 

@@ -116,7 +116,7 @@ The judge needs NIFTY50 data to say "market is bullish/bearish today." Without t
 # Fills news_context (live daemon judge context) + news_archive (backtest replay headlines)
 bun run backfill-news-scraper -- --from 2026-03-01 --to 2026-04-17 --output-archive
 ```
-Writes **one row per calendar day** into Mongo ``news_context`` (used by ``fetchTodayNewsContext`` in the live daemon). With ``--output-archive``, also writes ``news_archive`` (timestamped at 09:30 IST per day) so backtest replay gets causal news headlines. **Bar replay backtests** do **not** read `news_context`; they use ``news_archive`` and/or ``HISTORICAL_NEWS_PATH`` JSON — see [MongoDB collections](#mongodb-collections).
+Writes **one row per calendar day** into Mongo ``news_context`` (used by ``fetchTodayNewsContext`` in the live daemon). With ``--output-archive``, also writes ``news_archive`` (timestamped at 09:30 IST per day) so backtest replay gets causal news headlines. Archive writes are day-level upserts with headline dedup, so reruns fetch again but avoid duplicate same-day headlines. **Bar replay backtests** do **not** read `news_context`; they use ``news_archive`` and/or ``HISTORICAL_NEWS_PATH`` JSON — see [MongoDB collections](#mongodb-collections).
 
 ### Step 4 — Mine price patterns into Pinecone
 ```bash
@@ -190,7 +190,7 @@ curl http://127.0.0.1:3000/health
 | `bun run backfill-news-scraper` | Scrape ET archive headlines into news_context |
 | `bun run weekend-optimize` | Mine price patterns from all Mongo tickers → Pinecone |
 | `bun run backtest` | Full replay with PnL simulation → trades_backtest |
-| `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze |
+| `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze (shows effective judge model and auto-refreshes replay news coverage) |
 | `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
@@ -237,7 +237,9 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # techni
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
 # one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
-# options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --judge-model anthropic/claude-sonnet-4.5
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --fail-on-missing-news
+# options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all --judge-model <id> --fail-on-missing-news --news-min-headlines N --no-auto-backfill-news --news-backfill-no-filter
 # run profile comparison on same date range
 bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first
 # options: --skip-judge --sync --force-sync-all --step 15
@@ -367,7 +369,7 @@ VOL_REGIME_HIGH_MIN_PCT=0.22  # above 0.22% realized vol = HIGH
 JUDGE_COOLDOWN_MS=300000      # 5 min between judge calls per strategy per ticker
 LIVE_SKIP_JUDGE=false         # true => bypass LLM judge (technical-only)
 PINECONE_GATE_MIN_SCORE=0.92  # legacy; consensus settings above control auto-approval
-JUDGE_MODEL=anthropic/claude-sonnet-4
+JUDGE_MODEL=deepseek/deepseek-chat
 
 # Lessons feedback loop
 LESSONS_FEEDBACK_ENABLED=true # inject yesterday's lessons into judge prompt

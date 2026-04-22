@@ -158,7 +158,8 @@ export async function fetchLatestOpenExecutedTradeByTicker(
 
 export async function fetchNewsArchiveHeadlinesBeforeOrAt(
   sim: Date,
-  limitDocs = 40
+  limitDocs = 40,
+  dedupe = true
 ): Promise<string[]> {
   const c = await col<NewsArchiveDoc>(collections.newsArchive);
   const docs = await c
@@ -166,17 +167,66 @@ export async function fetchNewsArchiveHeadlinesBeforeOrAt(
     .sort({ ts: -1 })
     .limit(limitDocs)
     .toArray();
-  const seen = new Set<string>();
   const out: string[] = [];
+  const seen = new Set<string>();
   for (const d of docs) {
     for (const h of d.headlines ?? []) {
-      if (seen.has(h)) continue;
-      seen.add(h);
+      if (dedupe) {
+        if (seen.has(h)) continue;
+        seen.add(h);
+      }
       out.push(h);
       if (out.length >= 30) return out;
     }
   }
   return out;
+}
+
+export async function upsertNewsArchiveDay(
+  istDate: string,
+  headlines: string[],
+  source = "ET-archive-scraper"
+): Promise<void> {
+  const d = DateTime.fromISO(istDate, { zone: IST }).set({
+    hour: 9,
+    minute: 30,
+    second: 0,
+    millisecond: 0,
+  });
+  if (!d.isValid) {
+    throw new Error(`Invalid IST date for news_archive upsert: ${istDate}`);
+  }
+  const ts = d.toJSDate();
+  const c = await col<NewsArchiveDoc>(collections.newsArchive);
+  const existing = await c.findOne({ ts, source });
+  const mergeUnique = (items: string[]): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const h of items) {
+      const t = h.trim();
+      if (!t) continue;
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(t);
+    }
+    return out;
+  };
+  const merged = mergeUnique([
+    ...(existing?.headlines ?? []),
+    ...headlines,
+  ]).slice(0, 60);
+  await c.updateOne(
+    { ts, source },
+    {
+      $set: {
+        ts,
+        source,
+        headlines: merged,
+      },
+    },
+    { upsert: true }
+  );
 }
 
 export async function bulkInsertNewsArchive(

@@ -57,6 +57,8 @@ export interface TradeLogDoc extends Document {
   strategy: StrategyId;
   env: "PAPER" | "LIVE";
   technical_snapshot: TechnicalSnapshot;
+  /** Effective LLM model id used for judge call context in this decision */
+  ai_model?: string;
   ai_confidence: number;
   ai_reasoning: string;
   risk_eval?: {

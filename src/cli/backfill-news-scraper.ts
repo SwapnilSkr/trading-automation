@@ -9,8 +9,7 @@
 import "dotenv/config";
 import { DateTime } from "luxon";
 import { env } from "../config/env.js";
-import { ensureIndexes, upsertNews, bulkInsertNewsArchive } from "../db/repositories.js";
-import type { NewsArchiveDoc } from "../types/domain.js";
+import { ensureIndexes, upsertNews, upsertNewsArchiveDay } from "../db/repositories.js";
 import { runCli } from "./runCli.js";
 import {
   filterMarketHeadlines,
@@ -62,8 +61,8 @@ async function main(): Promise<void> {
   }
 
   await ensureIndexes();
-  const archiveRows: NewsArchiveDoc[] = [];
   let d = start;
+  let archiveUpserts = 0;
   while (d <= end) {
     if (isIndianWeekday(d)) {
       const y = d.year;
@@ -85,12 +84,8 @@ async function main(): Promise<void> {
           });
 
           if (outputArchive) {
-            const ts = d.set({ hour: 9, minute: 30 }).toJSDate();
-            archiveRows.push({
-              ts,
-              headlines: top,
-              source: "ET-archive-scraper",
-            });
+            await upsertNewsArchiveDay(dateStr, top, "ET-archive-scraper");
+            archiveUpserts += 1;
           }
 
           console.log(`[archive] ${dateStr}: ${top.length} headlines`);
@@ -107,9 +102,8 @@ async function main(): Promise<void> {
     d = d.plus({ days: 1 });
   }
 
-  if (outputArchive && archiveRows.length > 0) {
-    const inserted = await bulkInsertNewsArchive(archiveRows);
-    console.log(`[backfill-news-scraper] wrote ${inserted} rows to news_archive`);
+  if (outputArchive) {
+    console.log(`[backfill-news-scraper] upserted ${archiveUpserts} day rows to news_archive`);
   }
 
   console.log("[backfill-news-scraper] done");

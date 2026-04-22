@@ -19,6 +19,7 @@ import { runBacktestReplay } from "../backtest/BacktestOrchestrator.js";
 import { runDiscoverySync } from "../services/discoveryRun.js";
 import { syncOhlcForRange } from "../services/marketSync.js";
 import { fetchTodayNewsContext } from "../services/news.js";
+import { ensureReplayNewsCoverage } from "../services/newsArchiveReplay.js";
 import type {
   Ohlc1m,
   OperatorRunDoc,
@@ -61,6 +62,71 @@ interface DailyStatus {
   coverage: CoverageRow[];
   operatorRuns: OperatorRunDoc[];
 }
+
+type MainMenuAction =
+  | "refresh"
+  | "change-date"
+  | "prepare"
+  | "replay-day"
+  | "replay-range"
+  | "analyst"
+  | "discovery"
+  | "help"
+  | "exit";
+
+interface MenuEntry {
+  action: MainMenuAction;
+  label: string;
+  aliases: string[];
+}
+
+const MAIN_MENU: MenuEntry[] = [
+  {
+    action: "refresh",
+    label: "Refresh status",
+    aliases: ["refresh", "r", "status", "s"],
+  },
+  {
+    action: "change-date",
+    label: "Change date context",
+    aliases: ["date", "d", "change"],
+  },
+  {
+    action: "prepare",
+    label: "Prepare/resume trading for selected date",
+    aliases: ["prepare", "p", "resume"],
+  },
+  {
+    action: "replay-day",
+    label: "Replay/backtest selected date",
+    aliases: ["replay", "backtest", "day"],
+  },
+  {
+    action: "replay-range",
+    label: "Replay/backtest a custom date range",
+    aliases: ["range", "replay-range", "backtest-range"],
+  },
+  {
+    action: "analyst",
+    label: "Run analyst for selected date",
+    aliases: ["analyst", "a", "lesson"],
+  },
+  {
+    action: "discovery",
+    label: "Run nightly discovery from selected date",
+    aliases: ["discovery", "nightly", "n"],
+  },
+  {
+    action: "help",
+    label: "Help (quick command examples)",
+    aliases: ["help", "h", "?"],
+  },
+  {
+    action: "exit",
+    label: "Exit",
+    aliases: ["exit", "quit", "q"],
+  },
+];
 
 function parseArgs(): ParsedArgs {
   const argv = process.argv.slice(2);
@@ -124,10 +190,6 @@ function activeWatchlistStatus(s: DailyStatus): string {
     zone: IST,
   }).toFormat("yyyy-MM-dd");
   return updatedDay < s.date ? "STALE" : "OK";
-}
-
-function numberOrInf(n: number): string {
-  return Number.isFinite(n) ? n.toFixed(2) : "inf";
 }
 
 async function recordOperation<T>(
@@ -294,18 +356,6 @@ function printStatus(s: DailyStatus): void {
   }
 }
 
-async function choose(
-  rl: ReturnType<typeof createInterface>,
-  question: string,
-  options: string[]
-): Promise<number> {
-  console.log(`\n${question}`);
-  options.forEach((o, i) => console.log(`  ${i + 1}. ${o}`));
-  const raw = await rl.question("Select: ");
-  const n = Number(raw.trim());
-  return Number.isInteger(n) && n >= 1 && n <= options.length ? n - 1 : -1;
-}
-
 async function ask(
   rl: ReturnType<typeof createInterface>,
   question: string,
@@ -324,6 +374,39 @@ async function confirm(
   const raw = (await rl.question(`${question} (${suffix}): `)).trim().toLowerCase();
   if (!raw) return fallback;
   return raw === "y" || raw === "yes";
+}
+
+function parseMenuInput(raw: string): MainMenuAction | undefined {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return "refresh";
+  const numeric = Number(trimmed);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= MAIN_MENU.length) {
+    return MAIN_MENU[numeric - 1]!.action;
+  }
+  for (const entry of MAIN_MENU) {
+    if (entry.aliases.includes(trimmed)) return entry.action;
+  }
+  return undefined;
+}
+
+function printMenu(currentDate: string): void {
+  console.log(`\nOperator menu (date=${currentDate})`);
+  for (let i = 0; i < MAIN_MENU.length; i++) {
+    console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
+  }
+  console.log("  Tip: press Enter to refresh, or type aliases like `date`, `replay`, `range`, `help`.");
+}
+
+function printHelp(): void {
+  console.log("\n[ops] quick examples:");
+  console.log("  1            # refresh status");
+  console.log("  2            # change date context");
+  console.log("  4            # replay selected date");
+  console.log("  5            # replay custom range");
+  console.log("  replay       # same as option 4");
+  console.log("  range        # same as option 5");
+  console.log("  date         # same as option 2");
+  console.log("  help");
 }
 
 async function createSnapshotForDate(
@@ -444,11 +527,26 @@ async function replayDay(
 
     const step = Number(await ask(rl, "Replay scan interval minutes", "15"));
     const skipJudge = await confirm(rl, "Skip LLM judge for replay?", true);
+    let judgeModelOverride = "";
+    if (!skipJudge) {
+      const report = await ensureReplayNewsCoverage({
+        from: date,
+        to: date,
+        logPrefix: "[ops][news]",
+      });
+      console.log(
+        `[ops] replay news coverage: ${report.coveredDays.length}/${report.expectedWeekdays.length} day(s), missing=${report.missingDays.length}, weak=${report.weakDays.length} (min=${report.minHeadlinesPerDay})`
+      );
+      judgeModelOverride = (
+        await ask(rl, "Judge model override (Enter = env default)", "")
+      ).trim();
+    }
     const summary = await runBacktestReplay({
       from: date,
       to: date,
       tickers: env.watchedTickers,
       stepMinutes: Number.isFinite(step) && step > 0 ? Math.floor(step) : 15,
+      judgeModel: judgeModelOverride || undefined,
       skipJudge,
       skipOrders: true,
       persistTrades: true,
@@ -465,6 +563,55 @@ async function replayDay(
       if ((r.status ?? 1) !== 0) {
         throw new Error(`backtest-analyze failed with status ${r.status}`);
       }
+    }
+  });
+}
+
+async function replayRange(
+  rl: ReturnType<typeof createInterface>,
+  dateFallback: string
+): Promise<void> {
+  const from = await ask(rl, "From date (YYYY-MM-DD)", dateFallback);
+  const to = await ask(rl, "To date (YYYY-MM-DD)", dateFallback);
+  validateDate(from);
+  validateDate(to);
+  await recordOperation("replay-range", from, async () => {
+    const step = Number(await ask(rl, "Replay scan interval minutes", "15"));
+    const skipJudge = await confirm(rl, "Skip LLM judge for replay?", true);
+    let judgeModelOverride = "";
+    if (!skipJudge) {
+      const report = await ensureReplayNewsCoverage({
+        from,
+        to,
+        logPrefix: "[ops][news]",
+      });
+      console.log(
+        `[ops] replay news coverage: ${report.coveredDays.length}/${report.expectedWeekdays.length} day(s), missing=${report.missingDays.length}, weak=${report.weakDays.length} (min=${report.minHeadlinesPerDay})`
+      );
+      judgeModelOverride = (
+        await ask(rl, "Judge model override (Enter = env default)", "")
+      ).trim();
+    }
+    const failOnMissingNews =
+      !skipJudge &&
+      (await confirm(rl, "Abort replay if historical news is missing?", false));
+    const args = [
+      "run",
+      "src/cli/backtest-snapshots.ts",
+      "--",
+      "--from",
+      from,
+      "--to",
+      to,
+      "--step",
+      String(Number.isFinite(step) && step > 0 ? Math.floor(step) : 15),
+      ...(skipJudge ? ["--skip-judge"] : []),
+      ...(judgeModelOverride ? ["--judge-model", judgeModelOverride] : []),
+      ...(failOnMissingNews ? ["--fail-on-missing-news"] : []),
+    ];
+    const r = spawnSync("bun", args, { stdio: "inherit" });
+    if ((r.status ?? 1) !== 0) {
+      throw new Error(`backtest-snapshots failed with status ${r.status}`);
     }
   });
 }
@@ -518,39 +665,62 @@ async function interactive(date: string): Promise<void> {
     while (true) {
       const status = await loadDailyStatus(currentDate);
       printStatus(status);
-      const choice = await choose(rl, "Operator menu", [
-        "Refresh status",
-        "Change date",
-        "Prepare/resume trading day",
-        "Replay/backtest this day",
-        "Run analyst for this day",
-        "Run nightly discovery from this day",
-        "Exit",
-      ]);
-      if (choice === 0) continue;
-      if (choice === 1) {
-        currentDate = await ask(rl, "Date", currentDate);
-        validateDate(currentDate);
+      printMenu(currentDate);
+      let raw = "";
+      try {
+        raw = await rl.question("Select: ");
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        if (code === "ERR_USE_AFTER_CLOSE") break;
+        throw e;
+      }
+      const action = parseMenuInput(raw);
+      if (!action) {
+        console.log("[ops] invalid selection. Type `help` for examples.");
         continue;
       }
-      if (choice === 2) {
+      if (action === "refresh") continue;
+      if (action === "change-date") {
+        currentDate = await ask(rl, "Date", currentDate);
+        validateDate(currentDate);
+        const next = await rl.question(
+          "Next action for this date? [replay/prepare/analyst/none]: "
+        );
+        const n = next.trim().toLowerCase();
+        if (n === "replay") {
+          await replayDay(rl, currentDate);
+        } else if (n === "prepare") {
+          await prepareTradingDay(rl, currentDate);
+        } else if (n === "analyst") {
+          await runAnalystForDate(currentDate);
+        }
+        continue;
+      }
+      if (action === "prepare") {
         await prepareTradingDay(rl, currentDate);
         continue;
       }
-      if (choice === 3) {
+      if (action === "replay-day") {
         await replayDay(rl, currentDate);
         continue;
       }
-      if (choice === 4) {
+      if (action === "replay-range") {
+        await replayRange(rl, currentDate);
+        continue;
+      }
+      if (action === "analyst") {
         await runAnalystForDate(currentDate);
         continue;
       }
-      if (choice === 5) {
+      if (action === "discovery") {
         await runNightlyDiscoveryForDate(rl, currentDate);
         continue;
       }
-      if (choice === 6) break;
-      console.log("[ops] invalid selection");
+      if (action === "help") {
+        printHelp();
+        continue;
+      }
+      if (action === "exit") break;
     }
   } finally {
     rl.close();

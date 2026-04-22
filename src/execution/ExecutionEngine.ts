@@ -657,6 +657,9 @@ export class ExecutionEngine {
     const atrValue = computeAtr(env.atrPeriod, ctx.sessionCandles);
     const volZValue = volumeZScore(ctx.sessionCandles, 20);
     const side: "BUY" | "SELL" = hit.side;
+    const selectedJudgeModel =
+      backtest?.judgeModel ??
+      (backtest ? env.judgeModelBacktest : env.judgeModel);
     const snap = normalizeSnapshot(hit.snapshot);
     const safetyEval = evaluateSafety(this.safety, this.openCount);
     const timeEval = evaluateTimeWindow(hit.strategy, entryTime);
@@ -695,6 +698,7 @@ export class ExecutionEngine {
       env: backtest ? "PAPER" : env.executionEnv,
       order_executed: false,
       technical_snapshot: snap,
+      ai_model: selectedJudgeModel,
       ai_confidence: 0,
       ai_reasoning: "",
       risk_eval: {
@@ -795,10 +799,6 @@ export class ExecutionEngine {
         yesterdaysLessons: this.yesterdaysLessons,
       };
 
-      const judgeModel =
-        backtest?.judgeModel ??
-        (backtest ? env.judgeModelBacktest : undefined);
-
       const pineconeConsensus = evaluatePineconeConsensus(
         neighbors,
         hit.strategy,
@@ -830,7 +830,7 @@ export class ExecutionEngine {
         };
         decisionVia = "pinecone-gate";
       } else {
-        judge = await callJudgeModel(judgeInput, { model: judgeModel });
+        judge = await callJudgeModel(judgeInput, { model: selectedJudgeModel });
         decisionVia = "llm-judge";
       }
     }

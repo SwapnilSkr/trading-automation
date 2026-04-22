@@ -9,6 +9,7 @@ import { collections, getDb } from "../db/mongo.js";
 import type { WatchlistSnapshotDoc } from "../types/domain.js";
 import { IST } from "../time/ist.js";
 import { syncOhlcForRange } from "../services/marketSync.js";
+import { ensureReplayNewsCoverage } from "../services/newsArchiveReplay.js";
 import { runCli } from "./runCli.js";
 
 interface Args {
@@ -23,6 +24,10 @@ interface Args {
   noPersist: boolean;
   forceSyncAll: boolean;
   tickersFallback: string[];
+  failOnMissingNews: boolean;
+  autoBackfillNews: boolean;
+  newsMinHeadlinesPerDay?: number;
+  newsBackfillNoFilter: boolean;
 }
 
 function parseArgs(): Args {
@@ -38,6 +43,10 @@ function parseArgs(): Args {
   let noPersist = false;
   let forceSyncAll = false;
   let tickersFallback: string[] = [];
+  let failOnMissingNews = false;
+  let autoBackfillNews = env.backtestNewsAutoBackfill;
+  let newsMinHeadlinesPerDay: number | undefined;
+  let newsBackfillNoFilter = env.backtestNewsAutoBackfillNoFilter;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -88,6 +97,22 @@ function parseArgs(): Args {
         .filter(Boolean);
       continue;
     }
+    if (a === "--fail-on-missing-news") {
+      failOnMissingNews = true;
+      continue;
+    }
+    if (a === "--no-auto-backfill-news") {
+      autoBackfillNews = false;
+      continue;
+    }
+    if (a === "--news-min-headlines" && argv[i + 1]) {
+      newsMinHeadlinesPerDay = Number(argv[++i]);
+      continue;
+    }
+    if (a === "--news-backfill-no-filter") {
+      newsBackfillNoFilter = true;
+      continue;
+    }
   }
 
   if (!from || !to) {
@@ -104,6 +129,10 @@ Options:
   --no-persist                    do not write trades_backtest
   --force-sync-all                disable coverage precheck and sync every ticker
   --tickers-fallback A,B          fallback if no snapshots in range
+  --fail-on-missing-news          abort when no news_archive docs exist up to --to
+  --no-auto-backfill-news         don't auto-fetch replay weekday news before run
+  --news-min-headlines N          minimum headline count per weekday for replay coverage
+  --news-backfill-no-filter       auto-backfill keeps raw ET archive titles (no market keyword filter)
 `);
   }
 
@@ -119,6 +148,13 @@ Options:
     noPersist,
     forceSyncAll,
     tickersFallback,
+    failOnMissingNews,
+    autoBackfillNews,
+    newsMinHeadlinesPerDay:
+      Number.isFinite(newsMinHeadlinesPerDay) && (newsMinHeadlinesPerDay ?? 0) > 0
+        ? Math.floor(newsMinHeadlinesPerDay!)
+        : undefined,
+    newsBackfillNoFilter,
   };
 }
 
@@ -263,6 +299,48 @@ async function main(): Promise<void> {
   console.log(
     `[backtest-snapshots] range=${args.from}..${args.to} snapshotTickers=${tickers.length}`
   );
+  const effectiveJudgeModel = args.judgeModel ?? env.judgeModelBacktest;
+  console.log(
+    `[backtest-snapshots] replay config: step=${args.step}m skipJudge=${args.skipJudge} judgeModel=${effectiveJudgeModel}`
+  );
+
+  if (!args.skipJudge) {
+    const report = await ensureReplayNewsCoverage({
+      from: args.from,
+      to: args.to,
+      minHeadlinesPerDay: args.newsMinHeadlinesPerDay,
+      autoBackfill: args.autoBackfillNews,
+      noFilter: args.newsBackfillNoFilter,
+      logPrefix: "[backtest-snapshots][news]",
+    });
+    const missing = report.missingDays.length;
+    const weak = report.weakDays.length;
+    const covered = report.coveredDays.length;
+    const expected = report.expectedWeekdays.length;
+    const summary = `coverage=${covered}/${expected} missing=${missing} weak=${weak} min_headlines=${report.minHeadlinesPerDay}`;
+    if (missing > 0 || weak > 0) {
+      const detail = [
+        missing > 0 ? `missing=[${report.missingDays.join(",")}]` : "",
+        weak > 0
+          ? `weak=[${report.weakDays
+              .map((d) => `${d.date}:${d.headlines}`)
+              .join(",")}]`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const msg =
+        `[backtest-snapshots] WARNING: replay news coverage incomplete after auto-backfill (${summary}) ${detail}`.trim();
+      if (args.failOnMissingNews) {
+        throw new Error(
+          `${msg}. Run backfill-news-scraper for the range (or lower BACKTEST_NEWS_MIN_HEADLINES_PER_DAY) and retry.`
+        );
+      }
+      console.warn(msg);
+    } else {
+      console.log(`[backtest-snapshots] news context: ${summary}`);
+    }
+  }
 
   if (!args.noSync) {
     const toSync = args.forceSyncAll
