@@ -54,6 +54,7 @@ This opens the interactive operator console. Use it to:
 - Prepare or repair today if you started late.
 - Replay/backtest a missed day.
 - Replay/backtest a custom date range directly from the menu.
+- Replay a custom date range in side-by-side comparison mode (baseline realistic + research microstructure profile).
 - Run analyst for a missed day.
 - Run nightly discovery manually.
 
@@ -61,6 +62,7 @@ Operator menu quality-of-life:
 
 - Press `Enter` to refresh status.
 - Use `Run suggested action (sentinel)` to auto-run the best next step based on gaps and current phase.
+- Use `Judge cooldown status` to see whether strategy:ticker judge cooldown keys are active right now and remaining time.
 - Use `Repair missing trading days (guided)` to repair backlog days one by one (oldest to newest).
 - Type aliases like `date`, `replay`, `range`, `prepare`, `analyst`, `help`.
 - After changing date, the CLI asks what you want to do next for that date.
@@ -121,6 +123,29 @@ bun run ops -- --date YYYY-MM-DD --replay
 
 The CLI checks for that day's snapshot and OHLC coverage, offers to repair missing pieces, runs a one-day replay, and can run the analyzer for the replay run.
 If you keep judge enabled, `ops` now also shows whether historical `news_archive` exists before the replay date and lets you override judge model at run time.
+
+## Compare Realism Profiles (Range Replay)
+
+Inside `bun run ops`, choose:
+
+- `Replay/backtest a custom date range`
+- Then answer `yes` to: `Run side-by-side realism comparison (baseline + research profile)?`
+
+What it does:
+
+- Run 1: your normal baseline replay (unchanged defaults)
+- Run 2: same engine and strategy logic, but with softer execution-friction assumptions for comparison:
+  - `BACKTEST_ENTRY_LATENCY_BARS=0`
+  - `BACKTEST_PESSIMISTIC_INTRABAR=false`
+  - `BACKTEST_SPREAD_BPS=1.0`
+  - `BACKTEST_BASE_SLIPPAGE_BPS=0.5`
+  - `BACKTEST_IMPACT_BPS_PER_1PCT_PARTICIPATION=0.10`
+  - `BACKTEST_VOLATILITY_SLIPPAGE_COEFF=0.03`
+
+Notes:
+
+- This does **not** change your default backtest behavior.
+- Both run IDs are printed; compare their analyzer output directly.
 Replay prep now auto-fetches ET archive headlines for replay weekdays by default and deduplicates on upsert, so repeated replays do not accumulate duplicate headlines for the same day.
 
 ## End-Of-Day Analyst

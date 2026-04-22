@@ -43,6 +43,18 @@ interface ParsedArgs {
   replay: boolean;
 }
 
+interface ReplaySnapshotCommandOptions {
+  from: string;
+  to: string;
+  step: number;
+  skipJudge: boolean;
+  judgeModelOverride?: string;
+  failOnMissingNews: boolean;
+  noClearTrades?: boolean;
+  noSync?: boolean;
+  envOverrides?: Record<string, string>;
+}
+
 interface CoverageRow {
   ticker: string;
   bars: number;
@@ -85,6 +97,7 @@ interface SentinelSuggestion {
 type MainMenuAction =
   | "refresh"
   | "suggested"
+  | "judge-cooldown"
   | "repair-missing-days"
   | "change-date"
   | "prepare"
@@ -111,6 +124,11 @@ const MAIN_MENU: MenuEntry[] = [
     action: "suggested",
     label: "Run suggested action (sentinel)",
     aliases: ["next", "sentinel", "suggest", "auto"],
+  },
+  {
+    action: "judge-cooldown",
+    label: "Judge cooldown status",
+    aliases: ["cooldown", "judge-cooldown", "jc"],
   },
   {
     action: "repair-missing-days",
@@ -594,23 +612,81 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `repair`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `repair`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
   console.log("\n[ops] quick examples:");
   console.log("  1            # refresh status");
   console.log("  2            # run suggested action (sentinel)");
-  console.log("  3            # repair missing days (guided)");
-  console.log("  4            # change date context");
-  console.log("  6            # replay selected date");
-  console.log("  7            # replay custom range");
+  console.log("  3            # judge cooldown status");
+  console.log("  4            # repair missing days (guided)");
+  console.log("  5            # change date context");
+  console.log("  7            # replay selected date");
+  console.log("  8            # replay custom range");
   console.log("  replay       # same as replay selected date");
   console.log("  range        # same as replay custom range");
   console.log("  repair       # same as repair missing days");
+  console.log("  cooldown     # same as judge cooldown status");
   console.log("  date         # same as change date");
   console.log("  sentinel     # same as option 2");
   console.log("  help");
+}
+
+async function printJudgeCooldownStatus(): Promise<void> {
+  const db = await getDb();
+  const nowMs = Date.now();
+  const cooldownMs = Math.max(0, Math.floor(env.judgeCooldownMs));
+  if (cooldownMs <= 0) {
+    console.log("[ops] judge cooldown disabled (JUDGE_COOLDOWN_MS <= 0)");
+    return;
+  }
+  const from = new Date(nowMs - cooldownMs);
+  const rows = await db
+    .collection<TradeLogDoc>(collections.trades)
+    .find(
+      { entry_time: { $gte: from } },
+      { projection: { ticker: 1, strategy: 1, entry_time: 1, order_executed: 1 } }
+    )
+    .sort({ entry_time: -1 })
+    .toArray();
+
+  const latestByKey = new Map<string, Date>();
+  for (const r of rows) {
+    const ticker = r.ticker ?? "UNKNOWN";
+    const strategy = r.strategy ?? "UNKNOWN";
+    const key = `${strategy}:${ticker}`;
+    if (!latestByKey.has(key)) latestByKey.set(key, r.entry_time);
+  }
+
+  const active = [...latestByKey.entries()]
+    .map(([key, ts]) => {
+      const ageMs = nowMs - ts.getTime();
+      const remainingMs = Math.max(0, cooldownMs - ageMs);
+      return { key, ts, remainingMs };
+    })
+    .filter((r) => r.remainingMs > 0)
+    .sort((a, b) => b.remainingMs - a.remainingMs);
+
+  console.log(
+    `\n[ops] judge cooldown window=${Math.floor(cooldownMs / 1000)}s, active_keys=${active.length}`
+  );
+  if (active.length === 0) {
+    console.log("  none active");
+    return;
+  }
+  for (const row of active.slice(0, 20)) {
+    const remainingSec = Math.ceil(row.remainingMs / 1000);
+    console.log(
+      `  ${row.key} remaining=${remainingSec}s last=${DateTime.fromJSDate(
+        row.ts,
+        { zone: IST }
+      ).toFormat("HH:mm:ss")}`
+    );
+  }
+  if (active.length > 20) {
+    console.log(`  ... and ${active.length - 20} more`);
+  }
 }
 
 async function repairMissingDays(
@@ -865,25 +941,83 @@ async function replayRange(
         "Abort replay if historical news coverage is missing/weak?",
         false
       ));
-    const args = [
-      "run",
-      "src/cli/backtest-snapshots.ts",
-      "--",
-      "--from",
+    const compareProfiles = await confirm(
+      rl,
+      "Run side-by-side realism comparison (baseline + research profile)?",
+      false
+    );
+    const replayStep =
+      Number.isFinite(step) && step > 0 ? Math.floor(step) : 15;
+
+    await runBacktestSnapshotsCommand({
       from,
-      "--to",
       to,
-      "--step",
-      String(Number.isFinite(step) && step > 0 ? Math.floor(step) : 15),
-      ...(skipJudge ? ["--skip-judge"] : []),
-      ...(judgeModelOverride ? ["--judge-model", judgeModelOverride] : []),
-      ...(failOnMissingNews ? ["--fail-on-missing-news"] : []),
-    ];
-    const r = spawnSync("bun", args, { stdio: "inherit" });
-    if ((r.status ?? 1) !== 0) {
-      throw new Error(`backtest-snapshots failed with status ${r.status}`);
+      step: replayStep,
+      skipJudge,
+      judgeModelOverride: judgeModelOverride || undefined,
+      failOnMissingNews,
+    });
+
+    if (compareProfiles) {
+      console.log(
+        "[ops] running comparison profile: research (same engine, softer microstructure assumptions)"
+      );
+      console.log(
+        "[ops] research overrides: ENTRY_LATENCY_BARS=0, PESSIMISTIC_INTRABAR=false, SPREAD_BPS=1.0, BASE_SLIPPAGE_BPS=0.5, IMPACT_BPS_PER_1PCT_PARTICIPATION=0.10, VOLATILITY_SLIPPAGE_COEFF=0.03"
+      );
+      await runBacktestSnapshotsCommand({
+        from,
+        to,
+        step: replayStep,
+        skipJudge,
+        judgeModelOverride: judgeModelOverride || undefined,
+        failOnMissingNews,
+        noClearTrades: true,
+        noSync: true,
+        envOverrides: {
+          BACKTEST_ENTRY_LATENCY_BARS: "0",
+          BACKTEST_PESSIMISTIC_INTRABAR: "false",
+          BACKTEST_SPREAD_BPS: "1.0",
+          BACKTEST_BASE_SLIPPAGE_BPS: "0.5",
+          BACKTEST_IMPACT_BPS_PER_1PCT_PARTICIPATION: "0.10",
+          BACKTEST_VOLATILITY_SLIPPAGE_COEFF: "0.03",
+        },
+      });
+      console.log(
+        "[ops] comparison complete: review both run IDs printed above in backtest-analyze output."
+      );
     }
   });
+}
+
+async function runBacktestSnapshotsCommand(
+  options: ReplaySnapshotCommandOptions
+): Promise<void> {
+  const args = [
+    "run",
+    "src/cli/backtest-snapshots.ts",
+    "--",
+    "--from",
+    options.from,
+    "--to",
+    options.to,
+    "--step",
+    String(options.step),
+    ...(options.skipJudge ? ["--skip-judge"] : []),
+    ...(options.judgeModelOverride
+      ? ["--judge-model", options.judgeModelOverride]
+      : []),
+    ...(options.failOnMissingNews ? ["--fail-on-missing-news"] : []),
+    ...(options.noClearTrades ? ["--no-clear-trades"] : []),
+    ...(options.noSync ? ["--no-sync"] : []),
+  ];
+  const childEnv = options.envOverrides
+    ? { ...process.env, ...options.envOverrides }
+    : process.env;
+  const r = spawnSync("bun", args, { stdio: "inherit", env: childEnv });
+  if ((r.status ?? 1) !== 0) {
+    throw new Error(`backtest-snapshots failed with status ${r.status}`);
+  }
 }
 
 async function runAnalystForDate(date: string): Promise<void> {
@@ -990,6 +1124,10 @@ async function interactive(date: string): Promise<void> {
       if (action === "refresh") continue;
       if (action === "suggested") {
         await runSuggestedAction(rl, currentDate, status);
+        continue;
+      }
+      if (action === "judge-cooldown") {
+        await printJudgeCooldownStatus();
         continue;
       }
       if (action === "change-date") {

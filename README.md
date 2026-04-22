@@ -258,6 +258,7 @@ Use `ops` when you missed part of a day or started late. It shows whether the wa
 `ops` also audits the last `OPS_MISSING_TRADING_DAYS_LOOKBACK` trading days and lists incomplete days (with exact missing reasons), so you can repair backlog days one by one.
 From the menu you can run `Repair missing trading days (guided)`, repair a single day, sync missing bars, run a replay, run analyst, or run discovery.
 `ops` includes an `ops-sentinel` recommendation and a one-click `Run suggested action (sentinel)` entry.
+For custom range replay, `ops` can also run side-by-side comparison mode: baseline realism profile and a research profile (softer microstructure friction) without changing default backtest logic.
 
 ### backtest flags
 ```bash
