@@ -151,6 +151,9 @@ export class ExecutionEngine {
   private strategyHealthMap = new Map<StrategyId, StrategyHealth>();
   /** Yesterday's lessons for judge context */
   private yesterdaysLessons?: string;
+  /** Confidence calibration table: bucket(0.0..0.9) -> empirical score */
+  private confidenceCalibration = new Map<number, { score: number; n: number }>();
+  private confidenceCalibrationSamples = 0;
 
   constructor(private broker: BrokerClient) {}
 
@@ -165,6 +168,42 @@ export class ExecutionEngine {
           `[Strategy Gate] ${h.strategy} DISABLED: ${h.reason} (${h.trades} trades)`
         );
       }
+    }
+  }
+
+  /** Build empirical confidence calibration from recent executed live trades. */
+  async refreshConfidenceCalibration(): Promise<void> {
+    this.confidenceCalibration.clear();
+    this.confidenceCalibrationSamples = 0;
+    if (!env.confidenceCalibrationEnabled) return;
+    const lookbackFrom = nowIST()
+      .minus({ days: Math.max(1, env.confidenceCalibrationLookbackDays) })
+      .toJSDate();
+    const rows = await fetchExecutedTradesSince(lookbackFrom, env.executionEnv);
+    if (rows.length < env.confidenceCalibrationMinSamples) return;
+
+    const buckets = new Map<number, { n: number; sum: number }>();
+    for (const t of rows) {
+      const conf = Math.max(0, Math.min(0.999, t.ai_confidence ?? 0));
+      const b = Math.floor(conf * 10) / 10;
+      const cur = buckets.get(b) ?? { n: 0, sum: 0 };
+      const outcome = t.result?.outcome;
+      const realized =
+        outcome === "WIN" ? 1 : outcome === "BREAKEVEN" ? 0.5 : 0;
+      cur.n += 1;
+      cur.sum += realized;
+      buckets.set(b, cur);
+    }
+
+    for (const [b, v] of buckets) {
+      if (v.n < 5) continue;
+      this.confidenceCalibration.set(b, { score: v.sum / v.n, n: v.n });
+      this.confidenceCalibrationSamples += v.n;
+    }
+    if (this.confidenceCalibrationSamples > 0) {
+      console.log(
+        `[Calibration] confidence table loaded (${this.confidenceCalibrationSamples} samples, buckets=${this.confidenceCalibration.size})`
+      );
     }
   }
 
@@ -194,6 +233,28 @@ export class ExecutionEngine {
   /** Set yesterday's lessons for judge context injection */
   setYesterdaysLessons(lessons: string | undefined): void {
     this.yesterdaysLessons = lessons;
+  }
+
+  private calibratedConfidence(raw: number): number {
+    const clamped = Math.max(0, Math.min(1, raw));
+    if (!env.confidenceCalibrationEnabled) return clamped;
+    if (this.confidenceCalibrationSamples < env.confidenceCalibrationMinSamples) {
+      return clamped;
+    }
+    const b = Math.floor(Math.max(0, Math.min(0.999, clamped)) * 10) / 10;
+    const row = this.confidenceCalibration.get(b);
+    if (!row) return clamped;
+    const w = Math.max(0, Math.min(1, env.confidenceCalibrationWeight));
+    return clamped * (1 - w) + row.score * w;
+  }
+
+  private judgeCooldownForScore(candidateScore: number): number {
+    if (!env.adaptiveJudgeCooldownEnabled) return env.judgeCooldownMs;
+    const lo = Math.max(1_000, env.adaptiveJudgeCooldownMinMs);
+    const hi = Math.max(lo, env.adaptiveJudgeCooldownMaxMs);
+    const s = Math.max(0, Math.min(1, candidateScore));
+    const scaled = lo + (1 - s) * (hi - lo);
+    return Math.floor(scaled);
   }
 
   /**
@@ -732,8 +793,9 @@ export class ExecutionEngine {
     if (!backtest) {
       const judgeLastAt = this.lastJudgeByStrategyTicker.get(strategyTickerKey) ?? 0;
       const judgeElapsed = nowMs - judgeLastAt;
-      if (judgeElapsed < env.judgeCooldownMs) {
-        const remaining = env.judgeCooldownMs - judgeElapsed;
+      const judgeCooldownMs = this.judgeCooldownForScore(candidateScore);
+      if (judgeElapsed < judgeCooldownMs) {
+        const remaining = judgeCooldownMs - judgeElapsed;
         if (env.liveDebugScans) {
           console.log(
             `[Decision] ${ticker} ${hit.strategy} rejected: judge cooldown active (${Math.ceil(
@@ -750,6 +812,7 @@ export class ExecutionEngine {
           technical_snapshot: normalizeSnapshot(hit.snapshot),
           ai_model: selectedJudgeModel,
           ai_confidence: 0,
+          ai_confidence_raw: 0,
           ai_reasoning: `COOLDOWN_JUDGE: active ${Math.ceil(remaining / 1000)}s`,
         });
         return;
@@ -775,6 +838,7 @@ export class ExecutionEngine {
           technical_snapshot: normalizeSnapshot(hit.snapshot),
           ai_model: selectedJudgeModel,
           ai_confidence: 0,
+          ai_confidence_raw: 0,
           ai_reasoning: `COOLDOWN_RISK_VETO: active ${Math.ceil(remaining / 1000)}s`,
         });
         return;
@@ -981,6 +1045,7 @@ export class ExecutionEngine {
       this.lastJudgeByStrategyTicker.set(strategyTickerKey, nowMs);
     }
 
+    const calibratedConfidence = this.calibratedConfidence(judge.confidence);
     const finalDecision: "APPROVE" | "DENY" = judge.approve ? "APPROVE" : "DENY";
     const counterfactualTwoLayerDecision: "APPROVE" | "DENY" =
       layer1.pass && judge.approve ? "APPROVE" : "DENY";
@@ -994,7 +1059,7 @@ export class ExecutionEngine {
     const sizingBase = this.computeSizing(
       entryPrice,
       atrValue,
-      judge.confidence,
+      calibratedConfidence,
       safetyEval.throttleMultiplier,
       marketEval.size_multiplier
     );
@@ -1013,7 +1078,8 @@ export class ExecutionEngine {
     const qty = sizing.qty;
     const doc: TradeLogDoc = {
       ...baseDoc,
-      ai_confidence: judge.confidence,
+      ai_confidence: calibratedConfidence,
+      ai_confidence_raw: judge.confidence,
       ai_reasoning: judge.reasoning,
       sizing_eval: {
         base_qty: sizing.baseQty,
@@ -1045,7 +1111,7 @@ export class ExecutionEngine {
 
     const decisionScore = Math.max(
       0,
-      Math.min(1, candidateScore * 0.4 + judge.confidence * 0.6)
+      Math.min(1, candidateScore * 0.4 + calibratedConfidence * 0.6)
     );
     let doOrder = judge.approve && !backtest?.skipOrders;
     let nonEntryReason: string | undefined;
@@ -1054,7 +1120,7 @@ export class ExecutionEngine {
       if (this.openCount >= env.maxConcurrentTrades) {
         const replaced = await this.maybeReplaceWeakestPosition(
           decisionScore,
-          judge.confidence
+          calibratedConfidence
         );
         if (!replaced) {
           doOrder = false;

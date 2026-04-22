@@ -60,6 +60,8 @@ export interface TradeLogDoc extends Document {
   /** Effective LLM model id used for judge call context in this decision */
   ai_model?: string;
   ai_confidence: number;
+  /** Raw model confidence before empirical calibration (if enabled) */
+  ai_confidence_raw?: number;
   ai_reasoning: string;
   risk_eval?: {
     allowed: boolean;

@@ -103,6 +103,7 @@ export class TradingOrchestrator {
           this.sessionInitDoneForDay = todayStr;
           await this.engine.refreshStrategyHealth();
           await this.engine.refreshRiskControls();
+          await this.engine.refreshConfidenceCalibration();
           if (env.lessonsFeedbackEnabled) {
             const yesterday = istDateString(nowIST().minus({ days: 1 }));
             const lesson = await fetchLessonForDate(yesterday);

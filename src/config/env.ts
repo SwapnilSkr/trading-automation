@@ -179,6 +179,12 @@ export const env = {
 
   /** Min ms between judge (or Pinecone-gate) decisions per ticker — live only */
   judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 5 * 60 * 1000),
+  /** If true, judge cooldown is scaled by candidate quality score */
+  adaptiveJudgeCooldownEnabled: bool("ADAPTIVE_JUDGE_COOLDOWN_ENABLED", true),
+  /** Adaptive judge cooldown lower bound (high-quality setups) */
+  adaptiveJudgeCooldownMinMs: num("ADAPTIVE_JUDGE_COOLDOWN_MIN_MS", 60 * 1000),
+  /** Adaptive judge cooldown upper bound (low-quality setups) */
+  adaptiveJudgeCooldownMaxMs: num("ADAPTIVE_JUDGE_COOLDOWN_MAX_MS", 5 * 60 * 1000),
   /** Retry cooldown for strategy:ticker pairs blocked by hard risk veto */
   riskVetoRetryCooldownMs: num("RISK_VETO_RETRY_COOLDOWN_MS", 60 * 1000),
   /** If true, rank and cap candidate triggers per ticker before full decisioning */
@@ -398,6 +404,14 @@ export const env = {
   confidenceSizingEnabled: bool("CONFIDENCE_SIZING_ENABLED", false),
   /** Upper bound for confidence-based size multiplier when enabled */
   confidenceMultiplierMax: num("CONFIDENCE_MULTIPLIER_MAX", 1.3),
+  /** If true, blend raw judge confidence with empirical bucket outcomes */
+  confidenceCalibrationEnabled: bool("CONFIDENCE_CALIBRATION_ENABLED", true),
+  /** Lookback in days for building live confidence calibration table */
+  confidenceCalibrationLookbackDays: num("CONFIDENCE_CALIBRATION_LOOKBACK_DAYS", 45),
+  /** Minimum closed trades needed before calibration is applied */
+  confidenceCalibrationMinSamples: num("CONFIDENCE_CALIBRATION_MIN_SAMPLES", 80),
+  /** Blend weight toward empirical confidence (0=no calibration, 1=fully empirical) */
+  confidenceCalibrationWeight: num("CONFIDENCE_CALIBRATION_WEIGHT", 0.5),
 
   // ── Partial exits ──────────────────────────────────────────────────────────
   partialExitsEnabled: bool("PARTIAL_EXITS_ENABLED", true),

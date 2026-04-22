@@ -224,7 +224,7 @@ curl http://127.0.0.1:3000/health
 | `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
 | `bun run risk-report` | Summarize hard risk/market gate blocks from `trades.risk_eval` |
 | `bun run shadow-eval-report` | Summarize shadow layer-1 vs layer-2 disagreement metrics from `trades.shadow_eval` |
-| `bun run confidence-calibration-report` | Compare confidence buckets and decision paths vs realized outcomes |
+| `bun run confidence-calibration-report` | Compare raw vs calibrated confidence buckets and decision paths vs realized outcomes |
 | `bun run monte-carlo-report` | Randomize backtest trade order to estimate max drawdown distribution |
 | `bun run walk-forward-backtest` | Run rolling out-of-sample backtest windows |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
@@ -297,11 +297,16 @@ bun run live-analyze -- --date 2026-04-20      # specific IST date
 ### risk and validation reports
 ```bash
 bun run risk-report -- --days 5 --env PAPER
-bun run confidence-calibration-report -- --days 20 --env PAPER
-bun run confidence-calibration-report -- --source backtest
+bun run confidence-calibration-report -- --days 20 --env PAPER --field raw
+bun run confidence-calibration-report -- --days 20 --env PAPER --field final
+bun run confidence-calibration-report -- --source backtest --field raw
 bun run monte-carlo-report -- --last --iters 1000
 bun run walk-forward-backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots --skip-judge
 ```
+
+Calibration note:
+- `--field raw` reads `ai_confidence_raw` (model output before calibration).
+- `--field final` reads `ai_confidence` (value after runtime calibration).
 
 ### shadow-eval-report flags
 ```bash
@@ -402,6 +407,9 @@ VOL_REGIME_HIGH_MIN_PCT=0.22  # above 0.22% realized vol = HIGH
 
 # Judge cost control
 JUDGE_COOLDOWN_MS=300000      # 5 min between judge calls per strategy per ticker
+ADAPTIVE_JUDGE_COOLDOWN_ENABLED=true # strong candidates cool down less, weak ones more
+ADAPTIVE_JUDGE_COOLDOWN_MIN_MS=60000 # lower bound used by adaptive cooldown
+ADAPTIVE_JUDGE_COOLDOWN_MAX_MS=300000 # upper bound used by adaptive cooldown
 RISK_VETO_RETRY_COOLDOWN_MS=60000 # 1 min retry wait after hard risk veto
 CANDIDATE_QUEUE_ENABLED=true  # rank and shortlist triggers per ticker
 MAX_CANDIDATES_PER_TICKER=2   # evaluate top-N candidates per ticker per scan
@@ -414,6 +422,12 @@ JUDGE_MODEL=deepseek/deepseek-chat
 
 # Lessons feedback loop
 LESSONS_FEEDBACK_ENABLED=true # inject yesterday's lessons into judge prompt
+
+# Confidence calibration (runtime)
+CONFIDENCE_CALIBRATION_ENABLED=true # blend raw confidence with realized outcomes
+CONFIDENCE_CALIBRATION_LOOKBACK_DAYS=45
+CONFIDENCE_CALIBRATION_MIN_SAMPLES=80
+CONFIDENCE_CALIBRATION_WEIGHT=0.5 # 0=raw confidence only, 1=fully empirical
 
 # Partial exits
 PARTIAL_EXITS_ENABLED=true
@@ -440,9 +454,10 @@ SHADOW_EVAL_ENFORCE_LAYER1=true
 - Profit factor < 1 and win rate > 50%: targets too small, raise `ATR_TARGET_MULTIPLE` or `EXIT_TARGET_PCT`
 - Profit factor < 1 and win rate < 40%: entries are bad, tighten Z-score threshold or ORB volume filter
 - Win rate OK but large drawdown: tighten `ATR_STOP_MULTIPLE` or `EXIT_STOP_PCT`
-- Good profit factor but few trades: judge cooldown too high (`JUDGE_COOLDOWN_MS`) or Pinecone gate too strict
+- Good profit factor but few trades: reduce adaptive upper cooldown bound (`ADAPTIVE_JUDGE_COOLDOWN_MAX_MS`) or relax Pinecone gate
 - Strategy auto-gate too aggressive: lower `STRATEGY_GATE_MIN_PF` or increase `STRATEGY_GATE_WINDOW`
 - ATR sizing producing too-large positions: lower `RISK_PER_TRADE_PCT` or `MAX_QTY_PER_TRADE`
+- Raw confidence and realized outcomes diverge: compare `--field raw` vs `--field final` in calibration report, then tune `CONFIDENCE_CALIBRATION_WEIGHT`
 
 ---
 

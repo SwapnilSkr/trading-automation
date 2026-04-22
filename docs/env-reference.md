@@ -73,6 +73,9 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `OPS_AI_MODEL` | `google/gemma-4-31b-it:free` | Model used by `bun run ops-ai` |
 | `OPS_MISSING_TRADING_DAYS_LOOKBACK` | `10` | `ops` audits this many recent trading days for missing artifacts and repair queue |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
+| `ADAPTIVE_JUDGE_COOLDOWN_ENABLED` | `true` | If `true`, cooldown is scaled by candidate quality score instead of fixed `JUDGE_COOLDOWN_MS` |
+| `ADAPTIVE_JUDGE_COOLDOWN_MIN_MS` | `60000` (1 min) | Lower bound for adaptive cooldown (best candidates) |
+| `ADAPTIVE_JUDGE_COOLDOWN_MAX_MS` | `300000` (5 min) | Upper bound for adaptive cooldown (weak candidates) |
 | `RISK_VETO_RETRY_COOLDOWN_MS` | `60000` (1 min) | Min retry wait after a hard `RISK_VETO` for the same strategy+ticker |
 | `CANDIDATE_QUEUE_ENABLED` | `true` | Rank and cap trigger candidates per ticker before full decisioning |
 | `MAX_CANDIDATES_PER_TICKER` | `2` | Maximum ranked candidates evaluated per ticker each scan |
@@ -207,7 +210,7 @@ Position size is computed dynamically from ATR to risk a fixed fraction of accou
 ```
 riskPerTrade = ACCOUNT_EQUITY × RISK_PER_TRADE_PCT
 baseQty      = floor(riskPerTrade / (ATR × ATR_STOP_MULTIPLE))
-confMult     = CONFIDENCE_SIZING_ENABLED ? clamp(0.5 + confidence × factor, 0.5, CONFIDENCE_MULTIPLIER_MAX) : 1
+confMult     = CONFIDENCE_SIZING_ENABLED ? clamp(0.5 + calibratedConfidence × factor, 0.5, CONFIDENCE_MULTIPLIER_MAX) : 1
 qtyRaw       = floor(baseQty × confMult × riskMult × marketMult)
 qtyCap       = min(MAX_QTY_PER_TRADE, floor((ACCOUNT_EQUITY × MAX_NOTIONAL_PER_TRADE_PCT) / entryPrice))
 qty          = clamp(qtyRaw, MIN_QTY_PER_TRADE, qtyCap)
@@ -230,12 +233,21 @@ qty          = clamp(qtyRaw, MIN_QTY_PER_TRADE, qtyCap)
 | `CONFIDENCE_SCALE_FACTOR` | `1.5` | Scales judge confidence into position size multiplier |
 | `CONFIDENCE_SIZING_ENABLED` | `false` | If false, confidence approves/denies but does not boost size |
 | `CONFIDENCE_MULTIPLIER_MAX` | `1.3` | Max confidence multiplier when confidence sizing is enabled |
+| `CONFIDENCE_CALIBRATION_ENABLED` | `true` | If true, blends raw judge confidence with empirical win/breakeven/loss outcomes |
+| `CONFIDENCE_CALIBRATION_LOOKBACK_DAYS` | `45` | Lookback window used to build live confidence buckets |
+| `CONFIDENCE_CALIBRATION_MIN_SAMPLES` | `80` | Minimum executed-trade samples before calibration is applied |
+| `CONFIDENCE_CALIBRATION_WEIGHT` | `0.5` | Blend weight toward empirical score (0 raw only, 1 empirical only) |
 
 **Example with confidence sizing explicitly enabled:** RELIANCE at ₹2500 with ATR(14) = ₹15.
 - `stopDistance = 15 × 1.5 = ₹22.50`
 - `baseQty = 5000 / 22.50 = 222 shares`
 - Judge confidence = 0.8: `confMult = clamp(0.5 + 0.8×1.5, 0.5, 1.3) = 1.30`
 - `qty = floor(222 × 1.30) = 288 shares` → capped at `MAX_QTY_PER_TRADE`
+
+Calibration note:
+- `ai_confidence_raw` stores the model's original confidence from the judge.
+- `ai_confidence` stores the calibrated value used by sizing/replacement when calibration is enabled.
+- Use `bun run confidence-calibration-report -- --field raw` and `--field final` to compare both views.
 
 ---
 

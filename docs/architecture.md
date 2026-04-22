@@ -97,9 +97,14 @@ If you only need operating steps, use `docs/instructions.md`.
 │                    │   [MARKET CONTEXT] Nifty + news               │
 │                    │   [YESTERDAY'S LESSONS] analyst summary        │
 │                    │                                                │
+│                    ├─ confidence calibration (optional)              │
+│                    │   ai_confidence_raw -> ai_confidence           │
+│                    │   (empirical bucket blend from recent trades)  │
+│                    │                                                │
 │                    └─ approve? → placePaperOrder() → MongoDB trades │
 │                                 stores: qty, atr_at_entry, ai_conf, │
-│                                 risk_eval, market_eval, sizing_eval │
+│                                 ai_confidence_raw, risk_eval,       │
+│                                 market_eval, sizing_eval            │
 │                                 shadow_eval, partial_exits          │
 │                                                                     │
 │  IST 15:15  SQUARE_OFF → closeIntraday() for all tickers           │
@@ -451,7 +456,7 @@ Returns: `{approve: bool, confidence: 0–1, reasoning: string}`
 **Cost optimization — the Pinecone gate:**
 Pinecone auto-approval now requires consensus: at least 3 same-strategy neighbors above 0.85 similarity and weighted win rate ≥60%. Same-sector and same-vol-regime matches carry more weight. Single winning neighbors no longer auto-approve trades.
 
-**Judge cooldown:** 5 minutes **per strategy per ticker** in live mode (each strategy on each ticker gets its own independent cooldown, so multiple strategies on the same ticker don't block each other).
+**Judge cooldown:** per strategy+ticker in live mode. With adaptive cooldown enabled, higher-quality candidates wait closer to 1 minute while weaker ones wait closer to 5 minutes (`ADAPTIVE_JUDGE_COOLDOWN_MIN_MS` to `ADAPTIVE_JUDGE_COOLDOWN_MAX_MS`). With adaptive mode off, it uses fixed `JUDGE_COOLDOWN_MS`.
 
 ---
 

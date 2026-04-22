@@ -73,6 +73,8 @@ Layman note:
 - In `ops` status, watch the decision funnel line to see if blocks are mostly `risk_veto`, `cooldown`, or `deny_other`.
 - The system now ranks trigger candidates and checks top ones first; it does not waste time on every weak trigger.
 - If your max positions are already full, it can replace the weakest open trade only when a clearly better new setup appears.
+- Judge cooldown is now adaptive: stronger setups are retried sooner, weaker setups wait longer.
+- Confidence is now dual-tracked: `ai_confidence_raw` (model output) and calibrated `ai_confidence` (used by sizing logic).
 
 Quick non-interactive checks:
 
@@ -207,3 +209,17 @@ bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --judge-model de
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missing-news # fail when news coverage is missing/weak
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --news-min-headlines 12
 ```
+
+## Confidence Calibration Check (Simple)
+
+Use this when you want to verify whether model confidence aligns with real outcomes:
+
+```bash
+bun run confidence-calibration-report -- --days 20 --env PAPER --field raw
+bun run confidence-calibration-report -- --days 20 --env PAPER --field final
+```
+
+How to read it:
+- `raw` = what the model said.
+- `final` = after runtime calibration based on recent realized trades.
+- If `final` buckets are more stable than `raw`, keep calibration enabled.

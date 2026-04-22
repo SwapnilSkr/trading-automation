@@ -14,11 +14,13 @@ function parseArgs(): {
   source: "trades" | "backtest";
   days?: number;
   env?: "PAPER" | "LIVE";
+  field: "raw" | "final";
 } {
   const args = process.argv.slice(2);
   let source: "trades" | "backtest" = "trades";
   let days: number | undefined;
   let envMode: "PAPER" | "LIVE" | undefined;
+  let field: "raw" | "final" = "raw";
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--source" && args[i + 1]) {
       const v = args[++i]!;
@@ -29,9 +31,12 @@ function parseArgs(): {
     } else if (args[i] === "--env" && args[i + 1]) {
       const v = args[++i]!.toUpperCase();
       if (v === "PAPER" || v === "LIVE") envMode = v;
+    } else if (args[i] === "--field" && args[i + 1]) {
+      const v = args[++i]!.toLowerCase();
+      if (v === "raw" || v === "final") field = v;
     }
   }
-  return { source, days, env: envMode };
+  return { source, days, env: envMode, field };
 }
 
 function bucket(confidence: number): string {
@@ -67,7 +72,11 @@ async function main(): Promise<void> {
   const byBucket = new Map<string, { total: number; wins: number; pnl: number }>();
   const byVia = new Map<string, { total: number; wins: number; pnl: number }>();
   for (const r of rows) {
-    const b = bucket(r.ai_confidence ?? 0);
+    const conf =
+      args.field === "raw"
+        ? r.ai_confidence_raw ?? r.ai_confidence ?? 0
+        : r.ai_confidence ?? 0;
+    const b = bucket(conf);
     const cur = byBucket.get(b) ?? { total: 0, wins: 0, pnl: 0 };
     cur.total++;
     if (r.result?.outcome === "WIN") cur.wins++;
@@ -82,7 +91,7 @@ async function main(): Promise<void> {
     byVia.set(via, viaRow);
   }
 
-  console.log(`\n[confidence-calibration-report] source=${args.source}${args.env ? ` env=${args.env}` : ""}`);
+  console.log(`\n[confidence-calibration-report] source=${args.source}${args.env ? ` env=${args.env}` : ""} field=${args.field}`);
   console.log(`  Completed trades: ${rows.length}`);
   console.log("\n  Confidence bucket   Trades   WinRate   PnL");
   for (const [b, s] of [...byBucket.entries()].sort((a, b2) => a[0].localeCompare(b2[0]))) {
