@@ -71,6 +71,8 @@ Operator menu quality-of-life:
 Layman note:
 - If portfolio risk caps are almost full, the system now tries to place a smaller quantity first (fit-to-headroom) before rejecting.
 - In `ops` status, watch the decision funnel line to see if blocks are mostly `risk_veto`, `cooldown`, or `deny_other`.
+- The system now ranks trigger candidates and checks top ones first; it does not waste time on every weak trigger.
+- If your max positions are already full, it can replace the weakest open trade only when a clearly better new setup appears.
 
 Quick non-interactive checks:
 

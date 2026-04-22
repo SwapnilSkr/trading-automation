@@ -42,7 +42,6 @@ import {
 } from "../strategies/triggers.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
 import {
-  checkSafety,
   createSafetyState,
   evaluateSafety,
   type SafetyState,
@@ -114,6 +113,7 @@ interface LivePosition {
   partialExits: NonNullable<TradeLogDoc["partial_exits"]>;
   completedPartialReasons: PartialExitReason[];
   atrAtEntry?: number;
+  entryScore?: number;
 }
 
 interface Layer1Decision {
@@ -131,6 +131,11 @@ interface SizingDecision {
   marketMultiplier: number;
   stopDistance?: number;
   maxNotionalQty?: number;
+}
+
+interface RankedTrigger {
+  hit: TriggerHit;
+  score: number;
 }
 
 export class ExecutionEngine {
@@ -519,7 +524,13 @@ export class ExecutionEngine {
     },
     backtest?: BacktestPassOptions
   ): Promise<void> {
-    if (!checkSafety(this.safety, this.openCount)) return;
+    const preScanSafety = evaluateSafety(this.safety, this.openCount);
+    if (!preScanSafety.allowed) {
+      const nonBookReasons = preScanSafety.reasons.filter(
+        (r) => r !== "Max concurrent trades reached"
+      );
+      if (!(env.replacementEnabled && nonBookReasons.length === 0)) return;
+    }
 
     const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines, marketSnapshot } =
       args;
@@ -671,13 +682,23 @@ export class ExecutionEngine {
       }
     }
 
-    for (const hit of executableTriggers) {
-      await this.maybeExecute(ticker, hit, {
+    const rankedTriggers = rankTriggers(executableTriggers, sessionCandles);
+    const shortlisted = env.candidateQueueEnabled
+      ? rankedTriggers.slice(0, Math.max(1, env.maxCandidatesPerTicker))
+      : rankedTriggers;
+    if (!backtest && env.liveDebugScans && shortlisted.length < rankedTriggers.length) {
+      console.log(
+        `[Queue] ${ticker} selected ${shortlisted.length}/${rankedTriggers.length} top candidates`
+      );
+    }
+
+    for (const ranked of shortlisted) {
+      await this.maybeExecute(ticker, ranked.hit, {
         niftyTrendHint,
         newsHeadlines,
         sessionCandles,
         marketSnapshot: marketSnapshot ?? backtest?.marketSnapshot,
-      }, backtest);
+      }, backtest, ranked.score);
     }
   }
 
@@ -699,7 +720,8 @@ export class ExecutionEngine {
       sessionCandles: Ohlc1m[];
       marketSnapshot?: MarketRegimeSnapshot;
     },
-    backtest?: BacktestPassOptions
+    backtest?: BacktestPassOptions,
+    candidateScore = 0.5
   ): Promise<void> {
     const nowMs = backtest?.simulatedAt.getTime() ?? Date.now();
     const strategyTickerKey = `${hit.strategy}:${ticker}`;
@@ -789,8 +811,12 @@ export class ExecutionEngine {
       at: entryTime,
       throttleMultiplier: safetyEval.throttleMultiplier,
     });
+    const safetyReasons =
+      !backtest && env.replacementEnabled
+        ? safetyEval.reasons.filter((r) => r !== "Max concurrent trades reached")
+        : safetyEval.reasons;
     const hardGateReasons = [
-      ...safetyEval.reasons,
+      ...safetyReasons,
       ...timeEval.reasons,
       ...marketEval.reasons,
       ...portfolioEval.reasons,
@@ -1017,10 +1043,35 @@ export class ExecutionEngine {
       };
     }
 
-    const doOrder =
-      judge.approve &&
-      checkSafety(this.safety, this.openCount) &&
-      !backtest?.skipOrders;
+    const decisionScore = Math.max(
+      0,
+      Math.min(1, candidateScore * 0.4 + judge.confidence * 0.6)
+    );
+    let doOrder = judge.approve && !backtest?.skipOrders;
+    let nonEntryReason: string | undefined;
+
+    if (!backtest && doOrder) {
+      if (this.openCount >= env.maxConcurrentTrades) {
+        const replaced = await this.maybeReplaceWeakestPosition(
+          decisionScore,
+          judge.confidence
+        );
+        if (!replaced) {
+          doOrder = false;
+          nonEntryReason = `BOOK_FULL: open=${this.openCount}/${env.maxConcurrentTrades} replacement_rejected`;
+        }
+      }
+      if (doOrder) {
+        const orderSafety = evaluateSafety(this.safety, this.openCount);
+        const orderSafetyReasons = env.replacementEnabled
+          ? orderSafety.reasons.filter((r) => r !== "Max concurrent trades reached")
+          : orderSafety.reasons;
+        if (orderSafetyReasons.length > 0) {
+          doOrder = false;
+          nonEntryReason = `ORDER_BLOCK: ${orderSafetyReasons.join("; ")}`;
+        }
+      }
+    }
 
     if (judge.approve && backtest) {
       // Backtest replay may bypass broker orders; still mark a complete executed entry.
@@ -1068,6 +1119,7 @@ export class ExecutionEngine {
           partialExits: [],
           completedPartialReasons: [],
           atrAtEntry: atrValue,
+          entryScore: decisionScore,
         });
       }
     }
@@ -1079,6 +1131,9 @@ export class ExecutionEngine {
       await insertBacktestTrade(doc);
     } else if (!backtest) {
       if (!liveEntryPersisted) {
+        if (judge.approve && nonEntryReason) {
+          doc.ai_reasoning = `${doc.ai_reasoning} | ${nonEntryReason}`;
+        }
         await insertTrade(doc);
         if (env.liveDebugScans) {
           console.log(
@@ -1087,6 +1142,59 @@ export class ExecutionEngine {
         }
       }
     }
+  }
+
+  private weakestOpenPosition():
+    | { ticker: string; score: number; pos: LivePosition }
+    | undefined {
+    let weakest:
+      | { ticker: string; score: number; pos: LivePosition }
+      | undefined;
+    for (const [ticker, pos] of this.livePositions.entries()) {
+      const score = pos.entryScore ?? 0;
+      if (!weakest || score < weakest.score) {
+        weakest = { ticker, score, pos };
+      }
+    }
+    return weakest;
+  }
+
+  private async maybeReplaceWeakestPosition(
+    incomingScore: number,
+    judgeConfidence: number
+  ): Promise<boolean> {
+    if (!env.replacementEnabled) return false;
+    if (judgeConfidence < env.replacementMinConfidence) return false;
+    const weakest = this.weakestOpenPosition();
+    if (!weakest) return false;
+    const delta = incomingScore - weakest.score;
+    if (delta < env.replacementMinScoreDelta) return false;
+
+    const now = nowIST();
+    const day = now.startOf("day").toJSDate();
+    const candles = await fetchOhlcRange(weakest.ticker, day, now.toJSDate());
+    const last = candles[candles.length - 1];
+    if (!last) return false;
+
+    await this.broker.closeIntraday(weakest.ticker);
+    this.livePositions.delete(weakest.ticker);
+    this.openCount = Math.max(0, this.openCount - 1);
+    const result = this.liveResultFromExit(weakest.pos, last.c);
+    this.recordPnl(result.pnl);
+    if (weakest.pos.tradeId) {
+      await updateTradeExit(weakest.pos.tradeId, {
+        exit_time: now.toJSDate(),
+        result,
+      });
+    }
+    if (env.liveDebugScans) {
+      console.log(
+        `[Replace] closed ${weakest.ticker} score=${weakest.score.toFixed(
+          2
+        )} for incoming score=${incomingScore.toFixed(2)} delta=${delta.toFixed(2)}`
+      );
+    }
+    return true;
   }
 
   private liveResultFromExit(
@@ -1169,6 +1277,40 @@ function classifyVolRegime(sessionCandles: Ohlc1m[]): VolRegime | undefined {
   if (sigma < env.volRegimeLowMaxPct) return "LOW";
   if (sigma >= env.volRegimeHighMinPct) return "HIGH";
   return "MID";
+}
+
+function rankTriggers(
+  triggers: TriggerHit[],
+  candles: Ohlc1m[]
+): RankedTrigger[] {
+  const baseByStrategy: Partial<Record<StrategyId, number>> = {
+    OPEN_DRIVE_PULLBACK: 0.72,
+    VWAP_PULLBACK_TREND: 0.68,
+    EMA20_BREAK_RETEST: 0.64,
+    ORB_FAKEOUT_REVERSAL: 0.62,
+    ORB_15M: 0.6,
+    ORB_RETEST_15M: 0.6,
+    MEAN_REV_Z: 0.58,
+    BIG_BOY_SWEEP: 0.58,
+  };
+  const volZ = volumeZScore(candles, 20);
+  const atrVal = computeAtr(env.atrPeriod, candles);
+  const px = candles[candles.length - 1]?.c ?? 0;
+  const atrPct = atrVal && px > 0 ? (atrVal / px) * 100 : undefined;
+
+  return triggers
+    .map((hit) => {
+      const base = baseByStrategy[hit.strategy] ?? 0.55;
+      const volBonus =
+        volZ !== undefined ? Math.max(-0.08, Math.min(0.1, volZ * 0.05)) : 0;
+      const atrPenalty =
+        atrPct !== undefined
+          ? Math.max(-0.08, Math.min(0, (atrPct - 1.5) * -0.05))
+          : 0;
+      const score = Math.max(0, Math.min(1, base + volBonus + atrPenalty));
+      return { hit, score };
+    })
+    .sort((a, b) => b.score - a.score);
 }
 
 function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {

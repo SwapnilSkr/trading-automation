@@ -181,6 +181,16 @@ export const env = {
   judgeCooldownMs: num("JUDGE_COOLDOWN_MS", 5 * 60 * 1000),
   /** Retry cooldown for strategy:ticker pairs blocked by hard risk veto */
   riskVetoRetryCooldownMs: num("RISK_VETO_RETRY_COOLDOWN_MS", 60 * 1000),
+  /** If true, rank and cap candidate triggers per ticker before full decisioning */
+  candidateQueueEnabled: bool("CANDIDATE_QUEUE_ENABLED", true),
+  /** Max ranked triggers evaluated per ticker per scan pass */
+  maxCandidatesPerTicker: num("MAX_CANDIDATES_PER_TICKER", 2),
+  /** If true, allow replacing weakest open position when book is full */
+  replacementEnabled: bool("REPLACEMENT_ENABLED", true),
+  /** Minimum quality score edge required to replace weakest open position */
+  replacementMinScoreDelta: num("REPLACEMENT_MIN_SCORE_DELTA", 0.15),
+  /** Minimum judge confidence required before replacement is allowed */
+  replacementMinConfidence: num("REPLACEMENT_MIN_CONFIDENCE", 0.65),
   /** If true, bypass judge in live daemon and auto-approve technical triggers */
   liveSkipJudge: process.env.LIVE_SKIP_JUDGE === "true",
   /** If true, print per-scan trigger and judge decision logs in live daemon */

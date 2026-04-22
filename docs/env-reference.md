@@ -74,6 +74,11 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `OPS_MISSING_TRADING_DAYS_LOOKBACK` | `10` | `ops` audits this many recent trading days for missing artifacts and repair queue |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `RISK_VETO_RETRY_COOLDOWN_MS` | `60000` (1 min) | Min retry wait after a hard `RISK_VETO` for the same strategy+ticker |
+| `CANDIDATE_QUEUE_ENABLED` | `true` | Rank and cap trigger candidates per ticker before full decisioning |
+| `MAX_CANDIDATES_PER_TICKER` | `2` | Maximum ranked candidates evaluated per ticker each scan |
+| `REPLACEMENT_ENABLED` | `true` | Allow replacing weakest open position when book is full |
+| `REPLACEMENT_MIN_SCORE_DELTA` | `0.15` | Minimum incoming-vs-weakest score edge required for replacement |
+| `REPLACEMENT_MIN_CONFIDENCE` | `0.65` | Minimum judge confidence required before replacement is allowed |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
 | `LIVE_DEBUG_SCANS` | `true` | Print per-ticker scan/decision logs in EXECUTION mode (very useful for understanding why trades fire or don't) |
 | `SHADOW_EVAL_ENABLED` | `false` | Log layer-1/layer-2/final/counterfactual decisions into `trades.shadow_eval` (observe-only mode) |

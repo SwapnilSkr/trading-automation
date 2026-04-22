@@ -403,6 +403,11 @@ VOL_REGIME_HIGH_MIN_PCT=0.22  # above 0.22% realized vol = HIGH
 # Judge cost control
 JUDGE_COOLDOWN_MS=300000      # 5 min between judge calls per strategy per ticker
 RISK_VETO_RETRY_COOLDOWN_MS=60000 # 1 min retry wait after hard risk veto
+CANDIDATE_QUEUE_ENABLED=true  # rank and shortlist triggers per ticker
+MAX_CANDIDATES_PER_TICKER=2   # evaluate top-N candidates per ticker per scan
+REPLACEMENT_ENABLED=true      # allow replacing weakest open position when book is full
+REPLACEMENT_MIN_SCORE_DELTA=0.15 # require meaningful quality edge to replace
+REPLACEMENT_MIN_CONFIDENCE=0.65 # replacement needs at least this judge confidence
 LIVE_SKIP_JUDGE=false         # true => bypass LLM judge (technical-only)
 PINECONE_GATE_MIN_SCORE=0.92  # legacy; consensus settings above control auto-approval
 JUDGE_MODEL=deepseek/deepseek-chat
