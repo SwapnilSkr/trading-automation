@@ -54,6 +54,9 @@ export async function ensureIndexes(): Promise<void> {
 
   const ops = await col<OperatorRunDoc>(collections.operatorRuns);
   await ops.createIndex({ date: -1, operation: 1, started_at: -1 });
+
+  const sgs = await col<StrategyGateStateDoc>(collections.strategyGateState);
+  await sgs.createIndex({ updated_at: -1 });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {
@@ -387,6 +390,22 @@ export interface WeekendOptimizeCheckpointDoc extends Document {
   updated_at: Date;
 }
 
+export interface StrategyGateStateDoc extends Document {
+  _id: string; // strategy id
+  disabled: boolean;
+  disabled_at?: Date;
+  reenabled_at?: Date;
+  reason?: string;
+  last_metrics?: {
+    trades: number;
+    weighted_pf: number;
+    weighted_wr: number;
+    recent_pf: number;
+    recent_wr: number;
+  };
+  updated_at: Date;
+}
+
 export async function getWeekendOptimizeCheckpoint(): Promise<WeekendOptimizeCheckpointDoc | null> {
   const c = await col<WeekendOptimizeCheckpointDoc>(
     collections.weekendOptimizeCheckpoint
@@ -436,5 +455,30 @@ export async function weekendOptimizeAppendCompletedTicker(
       $addToSet: { completed_tickers: ticker },
       $set: { updated_at: new Date() },
     }
+  );
+}
+
+export async function fetchStrategyGateStates(): Promise<
+  Map<string, StrategyGateStateDoc>
+> {
+  const c = await col<StrategyGateStateDoc>(collections.strategyGateState);
+  const docs = await c.find({}).toArray();
+  return new Map(docs.map((d) => [d._id, d] as const));
+}
+
+export async function upsertStrategyGateState(
+  strategy: string,
+  patch: Omit<StrategyGateStateDoc, "_id">
+): Promise<void> {
+  const c = await col<StrategyGateStateDoc>(collections.strategyGateState);
+  await c.updateOne(
+    { _id: strategy },
+    {
+      $set: {
+        ...patch,
+        updated_at: new Date(),
+      },
+    },
+    { upsert: true }
   );
 }

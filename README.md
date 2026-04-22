@@ -86,7 +86,7 @@ Fixed-% exits (fallback when ATR unavailable):
 
 **Signal pipeline (EXECUTION phase, per ticker, every 60s):**
 1. **Vol-regime gate** — classify intraday vol as LOW/MID/HIGH; suppress strategies that don't work in current regime
-2. **Strategy auto-gate** — disable strategies with rolling PF < 0.8 or WR < 30% over last 20 trades
+2. **Strategy auto-gate** — decay-weighted PF/WR gate (recent trades weighted higher), with cooldown + improvement-based auto re-enable
 3. **Risk/market/time policy** — catastrophic conditions hard-block, mild crowding/weak-market conditions downsize and raise confidence floor, strategy-specific windows still apply
 4. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
 5. **Pinecone consensus gate** — require 3+ strong same-strategy neighbors and ≥60% weighted win rate before auto-approval
@@ -399,6 +399,13 @@ STRATEGY_GATE_WINDOW=20       # evaluate over last 20 trades
 STRATEGY_GATE_MIN_TRADES=40   # don't disable until enough closed-trade sample
 STRATEGY_GATE_MIN_PF=0.8      # disable if profit factor < 0.8
 STRATEGY_GATE_MIN_WIN_RATE=0.3 # disable if win rate < 30%
+STRATEGY_GATE_DECAY_ENABLED=true
+STRATEGY_GATE_DECAY_HALFLIFE_TRADES=10
+STRATEGY_REENABLE_ENABLED=true
+STRATEGY_REENABLE_COOLDOWN_DAYS=2
+STRATEGY_REENABLE_RECENT_TRADES=8
+STRATEGY_REENABLE_MIN_PF=1.05
+STRATEGY_REENABLE_MIN_WIN_RATE=0.45
 
 # Volatility regime gating (strategy ↔ regime pairing)
 VOL_REGIME_SWITCH_ENABLED=true
@@ -480,7 +487,7 @@ SHADOW_EVAL_ENFORCE_LAYER1=true
 - Good profit factor but few trades: reduce adaptive upper cooldown bound (`ADAPTIVE_JUDGE_COOLDOWN_MAX_MS`) or relax Pinecone gate
 - Too many risk vetoes from crowding: keep `RISK_SOFT_THROTTLES_ENABLED=true` and tune soft multipliers before raising hard caps
 - Too many low-quality fills near open/late session: increase session confidence floors, not global hard caps
-- Strategy auto-gate too aggressive: lower `STRATEGY_GATE_MIN_PF` or increase `STRATEGY_GATE_WINDOW`
+- Strategy auto-gate too aggressive: increase `STRATEGY_GATE_DECAY_HALFLIFE_TRADES`, relax `STRATEGY_GATE_MIN_PF/WR`, or reduce `STRATEGY_REENABLE_COOLDOWN_DAYS`
 - ATR sizing producing too-large positions: lower `RISK_PER_TRADE_PCT` or `MAX_QTY_PER_TRADE`
 - Raw confidence and realized outcomes diverge: compare `--field raw` vs `--field final` in calibration report, then tune `CONFIDENCE_CALIBRATION_WEIGHT`
 

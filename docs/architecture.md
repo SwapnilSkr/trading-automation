@@ -60,8 +60,9 @@ If you only need operating steps, use `docs/instructions.md`.
 │               │   classifyVolRegime() → LOW/MID/HIGH               │
 │               │   suppress strategies inactive in current regime    │
 │               │                                                     │
-│               ├─ [GATE 2] Strategy auto-gate (rolling PF/WR)        │
-│               │   isStrategyAllowed() → skip if PF<0.8 or WR<30%  │
+│               ├─ [GATE 2] Strategy auto-gate (decay PF/WR + state)  │
+│               │   disable on weak weighted PF/WR                    │
+│               │   re-enable only after cooldown + improvement       │
 │               │                                                     │
 │               ├─ [GATE 3] Hard institutional risk gates             │
 │               │   time window + drawdown + sector/side/correlation  │
@@ -349,8 +350,9 @@ TriggerHit[]
     │
     ▼ GATE 2: Strategy Auto-Gate
     │  loadStrategyHealth() (cached, refreshed each EXECUTION session start)
-    │  isStrategyAllowed() → false if PF < 0.8 or WR < 30% over last 20 trades
-    │  minimum 10 trades required before gating kicks in
+    │  decay-weighted PF/WR (recent trades weighted higher)
+    │  disable if trades >= STRATEGY_GATE_MIN_TRADES and thresholds fail
+    │  if disabled: re-enable only after cooldown + recent improvement
     │
     ▼ GATE 3: Risk / Market / Time Policy
     │  evaluateTimeWindow(strategy, ts)
@@ -463,17 +465,17 @@ Pinecone auto-approval now requires consensus: at least 3 same-strategy neighbor
 
 ---
 
-## Strategy Auto-Gate (Rolling Performance Filter)
+## Strategy Auto-Gate (Decay-Weighted + Re-enable)
 
 `src/execution/strategyTracker.ts` maintains rolling performance stats for all 14 strategies:
 
 - Queries last `STRATEGY_GATE_WINDOW` (default 20) executed trades from Mongo per strategy
-- Computes: win rate, profit factor, total PnL
-- **Gate condition:** disable strategy if `trades >= 10` AND (`PF < STRATEGY_GATE_MIN_PF` OR `WR < STRATEGY_GATE_MIN_WIN_RATE`)
-- The 10-trade minimum prevents premature disabling due to small sample variance
+- Computes raw + decay-weighted win rate/profit factor and total PnL
+- **Disable condition:** if `trades >= STRATEGY_GATE_MIN_TRADES` and weighted PF/WR breach thresholds
+- **Re-enable condition:** strategy remains disabled for `STRATEGY_REENABLE_COOLDOWN_DAYS`, then must pass recent PF/WR improvement trigger
 - Health map is refreshed once at EXECUTION session start, cached for the session
 
-This creates a "survival of the fittest" mechanism: strategies that consistently lose money get automatically suspended until you reset them or their rolling window improves.
+This creates a controlled adaptation loop: weak strategies are suppressed quickly, then brought back only when recent evidence improves.
 
 ---
 

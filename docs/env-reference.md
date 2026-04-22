@@ -308,9 +308,9 @@ All 14 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_
 
 ---
 
-## Strategy Auto-Gate (Rolling Performance Filter)
+## Strategy Auto-Gate (Decay-Weighted + Re-Enable)
 
-Automatically disables strategies whose recent live performance falls below thresholds. Requires a minimum sample size before gating kicks in (avoids small-sample overreaction).
+Automatically disables strategies whose recent performance falls below thresholds, with optional decay weighting (recent trades matter more) and automatic re-enable after cooldown plus improvement trigger.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
@@ -319,10 +319,22 @@ Automatically disables strategies whose recent live performance falls below thre
 | `STRATEGY_GATE_MIN_TRADES` | `40` | Minimum closed trades before strategy can be disabled |
 | `STRATEGY_GATE_MIN_PF` | `0.8` | Disable strategy if profit factor < 0.8 |
 | `STRATEGY_GATE_MIN_WIN_RATE` | `0.3` | Disable strategy if win rate < 30% |
+| `STRATEGY_GATE_DECAY_ENABLED` | `true` | Use decay-weighted PF/WR for disable decision |
+| `STRATEGY_GATE_DECAY_HALFLIFE_TRADES` | `10` | Half-life in trades for decay weighting |
+| `STRATEGY_REENABLE_ENABLED` | `true` | Allow disabled strategies to auto-reenable |
+| `STRATEGY_REENABLE_COOLDOWN_DAYS` | `2` | Minimum disabled days before re-enable checks |
+| `STRATEGY_REENABLE_RECENT_TRADES` | `8` | Recent trades used for improvement trigger |
+| `STRATEGY_REENABLE_MIN_PF` | `1.05` | Re-enable trigger minimum PF on recent trades |
+| `STRATEGY_REENABLE_MIN_WIN_RATE` | `0.45` | Re-enable trigger minimum WR on recent trades |
 
-**Log example:** `[Strategy Gate] ORB_15M disabled: PF=0.62<0.8, WR=28%<30% over last 20 trades`
+**Log examples:**
+- Disable: `[Strategy Gate] ORB_15M DISABLED: PF=0.62<0.8, WR=28%<30%`
+- Re-enable: `[Strategy Gate] ORB_15M REENABLED: reenabled after cooldown 2d + recent PF=1.20 WR=55%`
 
-**Tuning:** If strategies get disabled too quickly (small sample noise), raise `STRATEGY_GATE_WINDOW` to 30–50. If you want stricter quality control, raise thresholds to `PF=1.0, WR=0.4`.
+**Tuning:**
+- Too twitchy: increase `STRATEGY_GATE_DECAY_HALFLIFE_TRADES` and/or `STRATEGY_GATE_WINDOW`.
+- Re-enabling too slowly: reduce `STRATEGY_REENABLE_COOLDOWN_DAYS` or lower re-enable PF/WR thresholds slightly.
+- Re-enabling too early: raise `STRATEGY_REENABLE_MIN_PF/WR` or increase cooldown days.
 
 ---
 

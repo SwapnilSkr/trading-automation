@@ -163,10 +163,20 @@ export class ExecutionEngine {
     if (!env.strategyAutoGateEnabled) return;
     this.strategyHealthMap = await loadStrategyHealth();
     const disabled = [...this.strategyHealthMap.values()].filter((h) => !h.allowed);
+    const reenabled = [...this.strategyHealthMap.values()].filter(
+      (h) => h.allowed && h.gate_status === "REENABLED"
+    );
     if (disabled.length > 0) {
       for (const h of disabled) {
         console.log(
           `[Strategy Gate] ${h.strategy} DISABLED: ${h.reason} (${h.trades} trades)`
+        );
+      }
+    }
+    if (reenabled.length > 0) {
+      for (const h of reenabled) {
+        console.log(
+          `[Strategy Gate] ${h.strategy} REENABLED: ${h.reason ?? "improvement trigger"}`
         );
       }
     }

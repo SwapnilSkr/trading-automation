@@ -459,6 +459,20 @@ export const env = {
   strategyGateMinPf: num("STRATEGY_GATE_MIN_PF", 0.8),
   /** Minimum win rate (0-1) to keep strategy active */
   strategyGateMinWinRate: num("STRATEGY_GATE_MIN_WIN_RATE", 0.3),
+  /** If true, strategy gate uses decay-weighted PF/WR (recent trades matter more) */
+  strategyGateDecayEnabled: bool("STRATEGY_GATE_DECAY_ENABLED", true),
+  /** Half-life in trades for decay weighting (lower = more recent emphasis) */
+  strategyGateDecayHalfLifeTrades: num("STRATEGY_GATE_DECAY_HALFLIFE_TRADES", 10),
+  /** If true, disabled strategies can auto-reenable after cooldown + improvement */
+  strategyReenableEnabled: bool("STRATEGY_REENABLE_ENABLED", true),
+  /** Minimum days a strategy stays disabled before re-enable checks apply */
+  strategyReenableCooldownDays: num("STRATEGY_REENABLE_COOLDOWN_DAYS", 2),
+  /** Recent trades used for improvement trigger */
+  strategyReenableRecentTrades: num("STRATEGY_REENABLE_RECENT_TRADES", 8),
+  /** Re-enable trigger minimum profit factor on recent trades */
+  strategyReenableMinPf: num("STRATEGY_REENABLE_MIN_PF", 1.05),
+  /** Re-enable trigger minimum win rate on recent trades */
+  strategyReenableMinWinRate: num("STRATEGY_REENABLE_MIN_WIN_RATE", 0.45),
 
   // ── Lessons feedback loop ─────────────────────────────────────────────
   /** Inject yesterday's lessons_learned into judge prompt */

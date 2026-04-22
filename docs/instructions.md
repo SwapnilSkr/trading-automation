@@ -77,6 +77,7 @@ Layman note:
 - Confidence is now dual-tracked: `ai_confidence_raw` (model output) and calibrated `ai_confidence` (used by sizing logic).
 - Mild crowding is now usually throttled (smaller quantity) instead of instantly vetoed.
 - Session policy is time-aware: strict near open, normal midday, cautious late session.
+- Strategy gate is now adaptive: weak strategies can be auto-disabled, then auto-reenabled only after cooldown + improved recent performance.
 
 Quick non-interactive checks:
 
@@ -238,4 +239,16 @@ SOFT_CORRELATION_HARD_BLOCK=0.90
 SESSION_OPEN_CONFIDENCE_FLOOR=0.62
 SESSION_LATE_CONFIDENCE_FLOOR=0.67
 MARKET_WEAK_CONFIDENCE_FLOOR=0.62
+```
+
+## Strategy Gate Tuning (Simple)
+
+If a strategy gets disabled and stays off too long:
+
+```bash
+STRATEGY_GATE_DECAY_HALFLIFE_TRADES=12
+STRATEGY_REENABLE_COOLDOWN_DAYS=1
+STRATEGY_REENABLE_RECENT_TRADES=8
+STRATEGY_REENABLE_MIN_PF=1.00
+STRATEGY_REENABLE_MIN_WIN_RATE=0.40
 ```
