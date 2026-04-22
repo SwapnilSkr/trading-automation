@@ -50,6 +50,7 @@ bun run ops
 This opens the interactive operator console. Use it to:
 
 - Check whether a date has its watchlist snapshot, news, OHLC bars, analyst lesson, and replay rows.
+- See which recent trading days are incomplete (backlog audit) and why.
 - Prepare or repair today if you started late.
 - Replay/backtest a missed day.
 - Replay/backtest a custom date range directly from the menu.
@@ -59,6 +60,8 @@ This opens the interactive operator console. Use it to:
 Operator menu quality-of-life:
 
 - Press `Enter` to refresh status.
+- Use `Run suggested action (sentinel)` to auto-run the best next step based on gaps and current phase.
+- Use `Repair missing trading days (guided)` to repair backlog days one by one (oldest to newest).
 - Type aliases like `date`, `replay`, `range`, `prepare`, `analyst`, `help`.
 - After changing date, the CLI asks what you want to do next for that date.
 
@@ -138,7 +141,7 @@ The interactive console can also run this from the menu.
 
 ## Nightly Discovery
 
-Normal scheduled process: PM2 runs `nightly-discovery` around 18:20 IST.
+Normal scheduled process: daemon runs nightly discovery in POST_MORTEM window (18:00–21:00 IST) when `NIGHTLY_DISCOVERY=true`.
 
 Manual repair:
 
@@ -168,7 +171,7 @@ Prefer `bun run ops -- --date YYYY-MM-DD --replay` for a missed day because it c
 If you run `backtest-snapshots` directly with judge enabled, it now prints replay config (`skipJudge`, effective judge model) and warns when `news_archive` is empty for the range:
 
 ```bash
-bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --judge-model anthropic/claude-sonnet-4.5
+bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --judge-model deepseek/deepseek-chat
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missing-news # fail when news coverage is missing/weak
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --news-min-headlines 12
 ```

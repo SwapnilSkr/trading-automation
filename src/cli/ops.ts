@@ -33,6 +33,7 @@ import {
   nextIndianWeekdayAfter,
   nowIST,
 } from "../time/ist.js";
+import { currentRunMode } from "../scheduler/mode.js";
 import { runCli } from "./runCli.js";
 
 interface ParsedArgs {
@@ -61,10 +62,30 @@ interface DailyStatus {
   latestBacktestRun?: string;
   coverage: CoverageRow[];
   operatorRuns: OperatorRunDoc[];
+  missingDays: MissingDayStatus[];
+}
+
+interface MissingDayStatus {
+  date: string;
+  reasons: string[];
+}
+
+interface SentinelSuggestion {
+  action:
+    | "prepare"
+    | "replay-day"
+    | "replay-range"
+    | "analyst"
+    | "discovery"
+    | "repair-missing-days"
+    | "wait";
+  reason: string;
 }
 
 type MainMenuAction =
   | "refresh"
+  | "suggested"
+  | "repair-missing-days"
   | "change-date"
   | "prepare"
   | "replay-day"
@@ -85,6 +106,16 @@ const MAIN_MENU: MenuEntry[] = [
     action: "refresh",
     label: "Refresh status",
     aliases: ["refresh", "r", "status", "s"],
+  },
+  {
+    action: "suggested",
+    label: "Run suggested action (sentinel)",
+    aliases: ["next", "sentinel", "suggest", "auto"],
+  },
+  {
+    action: "repair-missing-days",
+    label: "Repair missing trading days (guided)",
+    aliases: ["repair", "repair-missing", "repair-all"],
   },
   {
     action: "change-date",
@@ -178,6 +209,17 @@ function previousIndianWeekdayBefore(date: string): string {
   let d = DateTime.fromISO(date, { zone: IST }).minus({ days: 1 });
   while (!isIndianWeekday(d)) d = d.minus({ days: 1 });
   return d.toFormat("yyyy-MM-dd");
+}
+
+function auditTradingDays(anchorDate: string, count: number): string[] {
+  const out: string[] = [];
+  let d = DateTime.fromISO(anchorDate, { zone: IST });
+  if (anchorDate === istDateString()) d = d.minus({ days: 1 });
+  while (out.length < count) {
+    if (isIndianWeekday(d)) out.push(d.toFormat("yyyy-MM-dd"));
+    d = d.minus({ days: 1 });
+  }
+  return out.reverse();
 }
 
 function statusLabel(ok: boolean): string {
@@ -302,6 +344,7 @@ async function loadDailyStatus(date: string): Promise<DailyStatus> {
     .sort({ started_at: -1 })
     .limit(10)
     .toArray();
+  const missingDays = await loadMissingTradingDays(date);
   return {
     date,
     snapshot,
@@ -314,7 +357,57 @@ async function loadDailyStatus(date: string): Promise<DailyStatus> {
     latestBacktestRun: backtestAgg[0]?._id ?? undefined,
     coverage: await loadCoverage(tickers, date),
     operatorRuns,
+    missingDays,
   };
+}
+
+async function evaluateMissingDay(date: string): Promise<MissingDayStatus | null> {
+  const db = await getDb();
+  const reasons: string[] = [];
+  const { from, to } = dayRange(date);
+  const snapshot = await getWatchlistSnapshotForEffectiveDate(date);
+  const tickers = snapshot?.tickers ?? [];
+
+  if (tickers.length === 0) {
+    reasons.push("watchlist_snapshot");
+  }
+
+  const archiveCount = await db.collection(collections.newsArchive).countDocuments({
+    ts: { $gte: from, $lte: to },
+  });
+  if (archiveCount === 0) {
+    reasons.push("news_archive");
+  } else if (archiveCount < env.backtestNewsMinHeadlinesPerDay) {
+    reasons.push(
+      `news_archive_weak(${archiveCount}<${env.backtestNewsMinHeadlinesPerDay})`
+    );
+  }
+
+  if (tickers.length > 0) {
+    const coverage = await loadCoverage(tickers, date);
+    const weak = coverage.filter((r) => r.bars < 30).length;
+    if (weak > 0) reasons.push(`ohlc_coverage(${weak}/${coverage.length} weak)`);
+  } else {
+    reasons.push("ohlc_coverage(unchecked:no_snapshot)");
+  }
+
+  const backtestRows = await db.collection(collections.tradesBacktest).countDocuments({
+    entry_time: { $gte: from, $lte: to },
+  });
+  if (backtestRows === 0) reasons.push("backtest_rows");
+
+  const lesson = await fetchLessonForDate(date);
+  if (!lesson) reasons.push("analyst_lesson");
+
+  if (reasons.length === 0) return null;
+  return { date, reasons };
+}
+
+async function loadMissingTradingDays(anchorDate: string): Promise<MissingDayStatus[]> {
+  const lookback = Math.max(1, Math.floor(env.opsMissingTradingDaysLookback));
+  const days = auditTradingDays(anchorDate, lookback);
+  const checks = await Promise.all(days.map((d) => evaluateMissingDay(d)));
+  return checks.filter((c): c is MissingDayStatus => Boolean(c));
 }
 
 function printStatus(s: DailyStatus): void {
@@ -354,6 +447,113 @@ function printStatus(s: DailyStatus): void {
       console.log(`    ${at} ${r.operation} ${r.status}${r.error ? ` (${r.error})` : ""}`);
     }
   }
+
+  if (s.missingDays.length > 0) {
+    console.log(
+      `  missing trading days (last ${env.opsMissingTradingDaysLookback}):`
+    );
+    for (const m of s.missingDays.slice(0, 6)) {
+      console.log(`    ${m.date} -> ${m.reasons.join(", ")}`);
+    }
+    if (s.missingDays.length > 6) {
+      console.log(`    ... and ${s.missingDays.length - 6} more`);
+    }
+  } else {
+    console.log(
+      `  missing trading days: none (last ${env.opsMissingTradingDaysLookback} checked)`
+    );
+  }
+
+  const suggestion = suggestNextAction(s);
+  const actionLabel =
+    suggestion.action === "wait" ? "wait" : `${suggestion.action} (menu action)`;
+  console.log(`  ops-sentinel:       ${actionLabel} — ${suggestion.reason}`);
+}
+
+function suggestNextAction(s: DailyStatus): SentinelSuggestion {
+  const today = istDateString();
+  const weakCoverage = s.coverage.filter((r) => r.bars < 30).length;
+  const hasSnapshot = Boolean(s.snapshot?.tickers?.length);
+  const hasNews = s.newsContextPresent;
+  const hasLesson = s.lessonPresent;
+  const hasBacktest = s.backtestTrades > 0;
+  const activeOk = activeWatchlistStatus(s) === "OK";
+  const mode = currentRunMode();
+  const now = nowIST();
+
+  if (s.date !== today) {
+    if (!hasSnapshot) {
+      return {
+        action: "discovery",
+        reason: "No watchlist snapshot for this date. Build snapshot first.",
+      };
+    }
+    if (weakCoverage > 0) {
+      return {
+        action: "prepare",
+        reason: `${weakCoverage} ticker(s) have weak OHLC coverage. Sync/repair first.`,
+      };
+    }
+    if (!hasBacktest) {
+      return {
+        action: "replay-day",
+        reason: "No replay rows for this date. Run replay/backtest.",
+      };
+    }
+    if (!hasLesson) {
+      return {
+        action: "analyst",
+        reason: "Replay exists but analyst lesson is missing.",
+      };
+    }
+    return {
+      action: "wait",
+      reason: "Historical date looks complete (snapshot, coverage, replay, lesson).",
+    };
+  }
+
+  if (s.missingDays.length > 0) {
+    return {
+      action: "repair-missing-days",
+      reason: `${s.missingDays.length} recent trading day(s) have missing artifacts.`,
+    };
+  }
+
+  if (!hasSnapshot || !hasNews || weakCoverage > 0 || !activeOk) {
+    return {
+      action: "prepare",
+      reason: "Today is not fully prepared (snapshot/news/coverage/watchlist).",
+    };
+  }
+
+  if (mode === "EXECUTION") {
+    return {
+      action: "wait",
+      reason: "Execution window active. Keep daemon running and monitor health.",
+    };
+  }
+  if (mode === "SYNC") {
+    return {
+      action: "wait",
+      reason: "Sync window active. Daemon handles OHLC sync in-loop.",
+    };
+  }
+  if (mode === "POST_MORTEM") {
+    return {
+      action: "wait",
+      reason: "Post-mortem window active. Daemon handles discovery/evening jobs.",
+    };
+  }
+  if (now.hour >= 15 && now.minute >= 50 && !hasLesson) {
+    return {
+      action: "analyst",
+      reason: "Market is closed and lesson is missing; run analyst now.",
+    };
+  }
+  return {
+    action: "wait",
+    reason: "No urgent repair needed right now.",
+  };
 }
 
 async function ask(
@@ -394,19 +594,85 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `repair`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
   console.log("\n[ops] quick examples:");
   console.log("  1            # refresh status");
-  console.log("  2            # change date context");
-  console.log("  4            # replay selected date");
-  console.log("  5            # replay custom range");
-  console.log("  replay       # same as option 4");
-  console.log("  range        # same as option 5");
-  console.log("  date         # same as option 2");
+  console.log("  2            # run suggested action (sentinel)");
+  console.log("  3            # repair missing days (guided)");
+  console.log("  4            # change date context");
+  console.log("  6            # replay selected date");
+  console.log("  7            # replay custom range");
+  console.log("  replay       # same as replay selected date");
+  console.log("  range        # same as replay custom range");
+  console.log("  repair       # same as repair missing days");
+  console.log("  date         # same as change date");
+  console.log("  sentinel     # same as option 2");
   console.log("  help");
+}
+
+async function repairMissingDays(
+  rl: ReturnType<typeof createInterface>,
+  anchorDate: string
+): Promise<void> {
+  const missing = await loadMissingTradingDays(anchorDate);
+  if (missing.length === 0) {
+    console.log(
+      `[ops] no missing days found in last ${env.opsMissingTradingDaysLookback} trading days`
+    );
+    return;
+  }
+  console.log(
+    `[ops] found ${missing.length} missing trading day(s); starting oldest -> newest repair`
+  );
+  for (const day of missing) {
+    console.log(`\n[ops] ${day.date} missing: ${day.reasons.join(", ")}`);
+    const mode = (
+      await ask(rl, "Action [auto/prepare/replay/analyst/skip/quit]", "auto")
+    )
+      .trim()
+      .toLowerCase();
+    if (mode === "quit" || mode === "q") {
+      console.log("[ops] repair flow stopped by operator");
+      return;
+    }
+    if (mode === "skip") continue;
+    if (mode === "prepare") {
+      await prepareTradingDay(rl, day.date);
+    } else if (mode === "replay") {
+      await replayDay(rl, day.date);
+    } else if (mode === "analyst") {
+      await runAnalystForDate(day.date);
+    } else {
+      if (
+        day.reasons.some((r) =>
+          r.startsWith("watchlist_snapshot") ||
+          r.startsWith("ohlc_coverage") ||
+          r.startsWith("news_archive")
+        )
+      ) {
+        await prepareTradingDay(rl, day.date);
+      }
+      const postPrepare = await evaluateMissingDay(day.date);
+      if (postPrepare?.reasons.some((r) => r.startsWith("backtest_rows"))) {
+        await replayDay(rl, day.date);
+      }
+      const postReplay = await evaluateMissingDay(day.date);
+      if (postReplay?.reasons.some((r) => r.startsWith("analyst_lesson"))) {
+        await runAnalystForDate(day.date);
+      }
+    }
+    const after = await evaluateMissingDay(day.date);
+    if (!after) {
+      console.log(`[ops] ${day.date} repaired`);
+    } else {
+      console.log(
+        `[ops] ${day.date} still missing: ${after.reasons.join(", ")}`
+      );
+    }
+  }
 }
 
 async function createSnapshotForDate(
@@ -662,6 +928,44 @@ async function runNightlyDiscoveryForDate(
   });
 }
 
+async function runSuggestedAction(
+  rl: ReturnType<typeof createInterface>,
+  date: string,
+  status: DailyStatus
+): Promise<void> {
+  const suggestion = suggestNextAction(status);
+  if (suggestion.action === "wait") {
+    console.log(`[ops] sentinel: no action needed — ${suggestion.reason}`);
+    return;
+  }
+  console.log(
+    `[ops] sentinel: running ${suggestion.action} — ${suggestion.reason}`
+  );
+  if (suggestion.action === "prepare") {
+    await prepareTradingDay(rl, date);
+    return;
+  }
+  if (suggestion.action === "replay-day") {
+    await replayDay(rl, date);
+    return;
+  }
+  if (suggestion.action === "replay-range") {
+    await replayRange(rl, date);
+    return;
+  }
+  if (suggestion.action === "analyst") {
+    await runAnalystForDate(date);
+    return;
+  }
+  if (suggestion.action === "discovery") {
+    await runNightlyDiscoveryForDate(rl, date);
+    return;
+  }
+  if (suggestion.action === "repair-missing-days") {
+    await repairMissingDays(rl, date);
+  }
+}
+
 async function interactive(date: string): Promise<void> {
   const rl = createInterface({ input, output });
   try {
@@ -684,6 +988,10 @@ async function interactive(date: string): Promise<void> {
         continue;
       }
       if (action === "refresh") continue;
+      if (action === "suggested") {
+        await runSuggestedAction(rl, currentDate, status);
+        continue;
+      }
       if (action === "change-date") {
         currentDate = await ask(rl, "Date", currentDate);
         validateDate(currentDate);
@@ -698,6 +1006,10 @@ async function interactive(date: string): Promise<void> {
         } else if (n === "analyst") {
           await runAnalystForDate(currentDate);
         }
+        continue;
+      }
+      if (action === "repair-missing-days") {
+        await repairMissingDays(rl, currentDate);
         continue;
       }
       if (action === "prepare") {

@@ -46,6 +46,8 @@ export const env = {
   judgeModel: process.env.JUDGE_MODEL ?? "deepseek/deepseek-chat",
   /** AI operator CLI planner model */
   opsAiModel: process.env.OPS_AI_MODEL ?? "google/gemma-4-31b-it:free",
+  /** Ops CLI: how many recent trading days to audit for missing artifacts */
+  opsMissingTradingDaysLookback: num("OPS_MISSING_TRADING_DAYS_LOOKBACK", 10),
   /** Cheaper model for `bun run backtest` (OpenRouter slug, e.g. Gemini Flash) */
   judgeModelBacktest:
     process.env.JUDGE_MODEL_BACKTEST ?? "google/gemini-2.0-flash-001",
@@ -70,6 +72,12 @@ export const env = {
 
   /** Delay between ET archive day requests (backfill-news-scraper) */
   archiveScraperDelayMs: num("ARCHIVE_SCRAPER_DELAY_MS", 2500),
+  /** Run end-of-day jobs (live-analyze + analyst) from the daemon loop */
+  daemonEveningJobsEnabled: bool("DAEMON_EVENING_JOBS_ENABLED", true),
+  /** Daemon local trigger time for live-analyze (IST HH:mm) */
+  daemonEveningLiveAnalyzeAt: str("DAEMON_EVENING_LIVE_ANALYZE_AT", "15:35"),
+  /** Daemon local trigger time for analyst (IST HH:mm) */
+  daemonEveningAnalystAt: str("DAEMON_EVENING_ANALYST_AT", "15:45"),
   /** Replay: auto-backfill missing/weak `news_archive` days before judge-enabled backtests */
   backtestNewsAutoBackfill: bool("BACKTEST_NEWS_AUTO_BACKFILL", true),
   /** Replay: min headlines per weekday in `news_archive`; below this is treated as weak coverage */

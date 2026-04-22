@@ -5,6 +5,30 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
 **Status:** PAPER trading only (`EXECUTION_ENV=PAPER`). No real orders are placed until you explicitly change that.
 
 ---
+## Start Here (Simple)
+
+If you only want the practical flow, use this:
+
+1. Open terminal 1:
+```bash
+bun run ops
+```
+Choose `Prepare/resume trading for selected date`.
+
+2. Open terminal 2:
+```bash
+bun run start
+```
+
+3. Check health:
+```bash
+curl http://127.0.0.1:3000/health
+```
+
+For plain-English operator help, read:
+- `docs/instructions.md`
+
+---
 
 ## How the system works (30-second overview)
 
@@ -22,7 +46,7 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
    (pattern memory)   │      │  4. Risk + market gates      │               │
                       │      │  5. Strategy auto-gate (PF/WR)│              │
    OpenRouter ◄───────│      │  6. Consensus Pinecone gate │               │
-   (Claude Sonnet 4)  │      │  7. ATR sizing + judge (LLM) │               │
+   (model from .env)  │      │  7. ATR sizing + judge (LLM) │               │
                       │      └──────────────────────────────┘               │
                       │   SYNC → POST_MORTEM (nightly discovery)            │
                       └───────────────────────────────────────────────────┘
@@ -38,6 +62,10 @@ Bun/TypeScript intraday trading system for NSE (India). Discovers momentum stock
 | SQUARE_OFF | 15:15–15:30 | Close all intraday positions |
 | SYNC | 15:30–17:00 | Backfill today's 1m OHLC from Angel (shared SmartAPI limiter prevents burst rate-limit spikes) |
 | POST_MORTEM | 18:00–21:00 | Nightly discovery-sync (Nifty 100 rescore) |
+
+Daemon daily jobs (same `bun run start` process):
+- **15:35 IST**: live-analyze summary
+- **15:45 IST**: analyst post-mortem (`lessons_learned` update)
 
 **Exit logic (per position, live paper + backtest):**
 
@@ -62,7 +90,7 @@ Fixed-% exits (fallback when ATR unavailable):
 3. **Hard risk/market/time gates** — daily/weekly drawdown, sector/side/correlation/exposure caps, NIFTY/breadth, strategy-specific windows
 4. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
 5. **Pinecone consensus gate** — require 3+ strong same-strategy neighbors and ≥60% weighted win rate before auto-approval
-6. **Judge (LLM)** — Claude Sonnet 4 via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
+6. **Judge (LLM)** — model from `.env` (`JUDGE_MODEL`) via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
 
 **Token cost:** Pinecone now skips the LLM only on consensus: 3+ strong same-strategy neighbors and ≥60% weighted win rate. Expect fewer unsafe auto-approvals and more LLM calls until strategy-specific memory builds up.
 
@@ -84,7 +112,7 @@ Required `.env` keys:
 | `PINECONE_API_KEY` | Pinecone API key |
 | `PINECONE_INDEX` | Index name (cosine, 1536 dims) |
 | `OPENAI_API_KEY` | Embeddings (`text-embedding-3-small`) |
-| `OPENROUTER_API_KEY` | Judge LLM (Claude Sonnet 4 default) |
+| `OPENROUTER_API_KEY` | Judge LLM (default live model: `deepseek/deepseek-chat`) |
 | `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`, `TOTP_SEED` | Angel SmartAPI credentials |
 
 See `src/config/env.ts` for all variables and defaults. See `docs/env-reference.md` for detailed explanations.
@@ -226,7 +254,10 @@ bun run ops -- --date 2026-04-21 --prepare
 bun run ops -- --date 2026-04-21 --replay
 ```
 
-Use `ops` when you missed part of a day or started late. It shows whether the watchlist snapshot, active watchlist, news, OHLC coverage, analyst lesson, replay rows, and recent operator actions exist for a date. From the menu you can repair the day, sync missing bars, run a replay, run analyst, or run discovery.
+Use `ops` when you missed part of a day or started late. It shows whether the watchlist snapshot, active watchlist, news, OHLC coverage, analyst lesson, replay rows, and recent operator actions exist for a date.
+`ops` also audits the last `OPS_MISSING_TRADING_DAYS_LOOKBACK` trading days and lists incomplete days (with exact missing reasons), so you can repair backlog days one by one.
+From the menu you can run `Repair missing trading days (guided)`, repair a single day, sync missing bars, run a replay, run analyst, or run discovery.
+`ops` includes an `ops-sentinel` recommendation and a one-click `Run suggested action (sentinel)` entry.
 
 ### backtest flags
 ```bash
@@ -237,7 +268,7 @@ bun run backtest -- --from 2026-01-01 --to 2026-04-17 --skip-judge      # techni
 bun run backtest -- --from 2026-01-01 --to 2026-04-17 --no-persist      # dry run
 # one-shot sequence: snapshot ticker union -> sync-history -> clear trades_backtest -> backtest -> analyze
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --skip-judge
-bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --judge-model anthropic/claude-sonnet-4.5
+bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --judge-model deepseek/deepseek-chat
 bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --fail-on-missing-news   # fail when news coverage is missing/weak
 # options: --no-sync --no-clear-trades --no-analyze --no-persist --step 15 --tickers-fallback A,B --force-sync-all --judge-model <id> --fail-on-missing-news --news-min-headlines N --no-auto-backfill-news --news-backfill-no-filter
 # run profile comparison on same date range
@@ -479,13 +510,10 @@ If you edit `.env` or code later:
 pm2 restart ecosystem.config.cjs --update-env
 ```
 
-PM2 processes:
+PM2 is optional and now only needs the main process:
 - `trading-bot` — main daemon, autorestart, runs 24/7
-- `evening-live-analyze` — 15:35 IST weekdays, end-of-day numeric stats from `trades`
-- `evening-analyst` — 15:45 IST weekdays, post-mortem → lessons_learned
-- `nightly-discovery` — 18:20 IST weekdays, Nifty 100 rescore (backup to in-process nightly)
 
-Disable the PM2 nightly-discovery cron OR set `NIGHTLY_DISCOVERY=false` — don't run both.
+`evening-live-analyze`, `evening-analyst`, and nightly discovery are now part of the daemon loop by default.
 
 ---
 

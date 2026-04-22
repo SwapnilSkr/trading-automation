@@ -4,6 +4,36 @@ Every Saturday/Sunday you run this playbook to fill data, validate strategies, a
 
 ---
 
+## Quick Weekend Checklist (Simple)
+
+If you want the shortest version:
+
+1. Refresh discovery + candles:
+```bash
+bun run discovery-sync -- --days 30 --top 20 --refresh-universe
+```
+2. Fill benchmark candles:
+```bash
+bun run sync-history -- --days 30 --ticker NIFTY50
+```
+3. Fill news for live + replay:
+```bash
+bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD --output-archive
+```
+4. Refresh Pinecone memory:
+```bash
+bun run weekend-optimize
+```
+5. Validate:
+```bash
+bun run backtest -- --from YYYY-MM-DD --to YYYY-MM-DD --watchlist-snapshots
+bun run backtest-analyze -- --last
+```
+
+Then start Monday with `bun run ops` and `bun run start`.
+
+---
+
 ## Why the weekend?
 
 - Angel SmartAPI only serves historical 1m OHLC data (not live ticks on weekends)
@@ -217,6 +247,7 @@ Production PM2 terminal split:
 | Sunday morning | Backtest + analyze |
 | Sunday afternoon | Tune params + out-of-sample validation |
 | Sunday evening | Verify Monday watchlist, start daemon if needed |
-| Weekday 15:45 IST | evening-analyst auto-runs (PM2) → lessons_learned |
-| Weekday 18:20 IST | nightly-discovery auto-runs (PM2) → refreshes active_watchlist |
+| Weekday 15:35 IST | daemon live-analyze auto-runs |
+| Weekday 15:45 IST | daemon analyst auto-runs → lessons_learned |
+| Weekday 18:00–21:00 IST | daemon nightly discovery window (if `NIGHTLY_DISCOVERY=true`) |
 | Next weekend | Repeat |

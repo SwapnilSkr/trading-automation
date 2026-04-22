@@ -1,5 +1,17 @@
 # System Architecture
 
+## In Plain English
+
+This system does three simple things:
+
+1. It keeps market data and watchlists updated in Mongo.
+2. It scans setups every minute during market hours and applies strict risk gates.
+3. It asks an LLM (model from `.env`) only for filtered candidates, then logs every decision.
+
+If you only need operating steps, use `docs/instructions.md`.
+
+---
+
 ## Data Flow
 
 ```
@@ -76,7 +88,7 @@
 │                    ├─ buildIndicators() → RSI, ATR, VWAP dist, VZ  │
 │                    ├─ getStrategyTrackRecord() → WR/PF string       │
 │                    │                                                │
-│                    ├─ [GATE 5] callJudgeModel() → Claude Sonnet 4  │
+│                    ├─ [GATE 5] callJudgeModel() → LLM from `.env`   │
 │                    │   [SIGNAL] strategy | ticker | setup           │
 │                    │   [PRICE ACTION] last 5 candles O/H/L/C/V     │
 │                    │   [INDICATORS] RSI, ATR, VWAP dist, Vol Z     │
@@ -95,7 +107,8 @@
 │  IST 15:30  SYNC                                                    │
 │    └─ syncIntradayHistory() → Angel API → MongoDB ohlc_1m          │
 │                                                                     │
-│  IST 15:45  PM2: evening-analyst                                    │
+│  IST 15:35  daemon: evening-live-analyze                            │
+│  IST 15:45  daemon: evening-analyst                                 │
 │    └─ analyst post-mortem → lessons_learned upsert                  │
 │                                                                     │
 │  IST 18:00  POST_MORTEM                                             │
@@ -353,7 +366,7 @@ TriggerHit[]
     │  weighted win rate ≥60%, with sector/regime weight boosts
     │  else → pass to Gate 5 with pattern summary context
     │
-    ▼ GATE 5: LLM Judge (Claude Sonnet 4)
+    ▼ GATE 5: LLM Judge (model from `.env`)
        Enriched structured prompt (7 sections)
        → {approve: bool, confidence: 0-1, reasoning: string}
        approve=true + hard gates still clear
@@ -401,7 +414,7 @@ The `SimPosition` in backtest carries `remainingQty`, partial exits, realized pa
 
 ## AI Judge
 
-The judge (Claude Sonnet 4 via OpenRouter, ~$0.003/call) acts as a final filter with a comprehensive structured prompt:
+The judge (OpenRouter model selected by `JUDGE_MODEL`) acts as a final filter with a structured prompt:
 
 ```
 [SIGNAL]
@@ -460,7 +473,7 @@ This creates a "survival of the fittest" mechanism: strategies that consistently
 
 Creates a self-improving cycle from daily experience:
 
-1. **Evening analyst** (PM2, 15:45 IST): calls two LLM prompts — one to analyze winning trades, one to analyze losing trades. Generates `[ACTIONS_KEEP]` and `[ACTIONS_FIX]` sections. Upserts to `lessons_learned` collection (keyed by IST date).
+1. **Evening analyst** (daemon, 15:45 IST by default): calls two LLM prompts — one to analyze winning trades, one to analyze losing trades. Generates `[ACTIONS_KEEP]` and `[ACTIONS_FIX]` sections. Upserts to `lessons_learned` collection (keyed by IST date).
 
 2. **Next-day EXECUTION init**: orchestrator loads yesterday's `lessons_learned` doc, calls `engine.setYesterdaysLessons(summary)`, stored in engine instance.
 

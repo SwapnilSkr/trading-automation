@@ -4,6 +4,20 @@ Full list of all `.env` variables, their defaults, and when to change them.
 
 ---
 
+## Read This First (Simple)
+
+If you are not sure what to edit, start with only these:
+
+1. Broker login: `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`, `TOTP_SEED`
+2. Safety mode: `EXECUTION_ENV` (`PAPER` is safest)
+3. Judge model: `JUDGE_MODEL` (live) and `JUDGE_MODEL_BACKTEST` (replay)
+4. Hard risk caps: `DAILY_STOP_LOSS`, `MAX_CONCURRENT_TRADES`
+5. Replay news quality: `BACKTEST_NEWS_MIN_HEADLINES_PER_DAY`
+
+If in doubt, keep defaults and run in paper mode.
+
+---
+
 ## Database
 
 | Variable | Default | Notes |
@@ -56,6 +70,8 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for local LLM |
 | `JUDGE_MODEL` | `deepseek/deepseek-chat` | Live judge model |
 | `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
+| `OPS_AI_MODEL` | `google/gemma-4-31b-it:free` | Model used by `bun run ops-ai` |
+| `OPS_MISSING_TRADING_DAYS_LOOKBACK` | `10` | `ops` audits this many recent trading days for missing artifacts and repair queue |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `LIVE_SKIP_JUDGE` | `false` | If `true`, daemon bypasses LLM judge and auto-approves technical triggers |
 | `LIVE_DEBUG_SCANS` | `true` | Print per-ticker scan/decision logs in EXECUTION mode (very useful for understanding why trades fire or don't) |
@@ -76,7 +92,7 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `PINECONE_GATE_SAME_SECTOR_WEIGHT` | `1.2` | Weight boost for same-sector neighbors |
 | `PINECONE_GATE_SAME_REGIME_WEIGHT` | `1.1` | Weight boost for same-vol-regime neighbors |
 
-**Cost estimation (live):** With 10 tickers, 5-min cooldown per strategy per ticker, 14 strategies → most are suppressed by gates. Expect 3–10 LLM calls/day at Claude Sonnet 4 prices (~$0.003/call = pennies/day).
+**Cost estimation (live):** With 10 tickers, 5-min cooldown per strategy per ticker, and all risk gates active, you usually see only a few LLM calls per day. Exact cost depends on your selected `JUDGE_MODEL`.
 
 Pinecone note: `weekend-optimize` mines generic `strategy=MINED` vectors for judge context. With `PINECONE_GATE_REQUIRE_SAME_STRATEGY=true`, those generic vectors do not auto-approve trades by themselves.
 
@@ -270,7 +286,7 @@ Automatically disables strategies whose recent live performance falls below thre
 
 ## Lessons Feedback Loop
 
-The analyst post-mortem (run nightly at 15:45 IST via PM2) writes a `lessons_learned` document into Mongo. At the start of each trading session's EXECUTION phase, the orchestrator loads yesterday's lessons and injects them into every judge call that day.
+The analyst post-mortem (run by the daemon around 15:45 IST by default) writes a `lessons_learned` document into Mongo. At the start of each trading session's EXECUTION phase, the orchestrator loads yesterday's lessons and injects them into every judge call that day.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
@@ -359,6 +375,9 @@ Use `BACKTEST_REALISM_ENABLED=false` when you want quick research-only runs; kee
 |----------|---------|-------|
 | `DISCOVERY_SYMBOL_DELAY_MS` | `2000` | Pause between Nifty 100 symbols (daily fetch) |
 | `NIGHTLY_DISCOVERY` | `true` | Run discovery-sync automatically in POST_MORTEM |
+| `DAEMON_EVENING_JOBS_ENABLED` | `true` | Run live-analyze + analyst from the daemon loop |
+| `DAEMON_EVENING_LIVE_ANALYZE_AT` | `15:35` | IST trigger time for live-analyze report |
+| `DAEMON_EVENING_ANALYST_AT` | `15:45` | IST trigger time for analyst post-mortem |
 
 **CLI (not env):** `bun run discovery-sync -- --refresh-universe` downloads the NSE Nifty 100 CSV and updates `data/ind_nifty100list.csv` when valid. Default runs use the **on-disk CSV only**. **Nightly** in-process discovery does **not** set `refresh-universe` — use a weekend CLI run with `--refresh-universe` if you need the latest index constituents.
 

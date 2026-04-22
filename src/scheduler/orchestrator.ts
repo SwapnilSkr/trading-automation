@@ -12,9 +12,11 @@ import { runDiscoverySync } from "../services/discoveryRun.js";
 import { runPreopenPivot } from "../services/preopenPivot.js";
 import { fetchNiftyTrendContext } from "../services/niftyTrend.js";
 import { buildMarketRegimeSnapshot } from "../risk/marketRegime.js";
+import { runAnalystForDate, runLiveAnalyzeForDate } from "../services/eveningJobs.js";
 import { env } from "../config/env.js";
 import {
   istDateString,
+  isIndianWeekday,
   minutesSinceMidnightIST,
   nowIST,
 } from "../time/ist.js";
@@ -34,6 +36,10 @@ export class TradingOrchestrator {
   private sessionInitDoneForDay?: string;
   /** Full-session OHLC top-up done once per EXECUTION day, useful after late starts/restarts. */
   private fullSessionExecSyncDoneForDay?: string;
+  private eveningLiveAnalyzeIstDay?: string;
+  private eveningAnalystIstDay?: string;
+  private eveningLiveAnalyzeRunning = false;
+  private eveningAnalystRunning = false;
 
   constructor(private broker: BrokerClient) {
     this.engine = new ExecutionEngine(broker);
@@ -47,6 +53,7 @@ export class TradingOrchestrator {
 
   async tick(): Promise<void> {
     const mode = currentRunMode();
+    await this.maybeRunEveningJobs();
     if (mode !== this.lastMode) {
       console.log("[Phase]", describeMode(mode));
       this.lastMode = mode;
@@ -225,6 +232,58 @@ export class TradingOrchestrator {
       }
       default:
         break;
+    }
+  }
+
+  private parseMinute(hhmm: string): number {
+    const [h, m] = hhmm.split(":").map((x) => Number(x));
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+    return h * 60 + m;
+  }
+
+  private async maybeRunEveningJobs(): Promise<void> {
+    if (!env.daemonEveningJobsEnabled) return;
+    const now = nowIST();
+    if (!isIndianWeekday(now)) return;
+    const day = istDateString(now);
+    const m = minutesSinceMidnightIST(now);
+    const liveAnalyzeAt = this.parseMinute(env.daemonEveningLiveAnalyzeAt);
+    const analystAt = this.parseMinute(env.daemonEveningAnalystAt);
+
+    if (
+      m >= liveAnalyzeAt &&
+      this.eveningLiveAnalyzeIstDay !== day &&
+      !this.eveningLiveAnalyzeRunning
+    ) {
+      this.eveningLiveAnalyzeRunning = true;
+      this.eveningLiveAnalyzeIstDay = day;
+      console.log(`[Orchestrator] daemon evening-live-analyze starting (${day})`);
+      try {
+        await runLiveAnalyzeForDate(day, (line) => console.log(line));
+        console.log(`[Orchestrator] daemon evening-live-analyze done (${day})`);
+      } catch (e) {
+        console.error("[Orchestrator] daemon evening-live-analyze failed", e);
+      } finally {
+        this.eveningLiveAnalyzeRunning = false;
+      }
+    }
+
+    if (
+      m >= analystAt &&
+      this.eveningAnalystIstDay !== day &&
+      !this.eveningAnalystRunning
+    ) {
+      this.eveningAnalystRunning = true;
+      this.eveningAnalystIstDay = day;
+      console.log(`[Orchestrator] daemon evening-analyst starting (${day})`);
+      try {
+        await runAnalystForDate(day, (line) => console.log(line));
+        console.log(`[Orchestrator] daemon evening-analyst done (${day})`);
+      } catch (e) {
+        console.error("[Orchestrator] daemon evening-analyst failed", e);
+      } finally {
+        this.eveningAnalystRunning = false;
+      }
     }
   }
 
