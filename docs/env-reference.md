@@ -72,6 +72,10 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `JUDGE_MODEL_BACKTEST` | `google/gemini-2.0-flash-001` | Cheaper backtest model |
 | `OPS_AI_MODEL` | `google/gemma-4-31b-it:free` | Model used by `bun run ops-ai` |
 | `OPS_MISSING_TRADING_DAYS_LOOKBACK` | `10` | `ops` audits this many recent trading days for missing artifacts and repair queue |
+| `FUNNEL_OPTIMIZER_LOOKBACK_DAYS` | `5` | Decision-funnel lookback window for `funnel-optimize` and ops tuning |
+| `FUNNEL_OPTIMIZER_MIN_DECISIONS` | `120` | Minimum decisions required before optimizer proposes tuning |
+| `FUNNEL_OPTIMIZER_DOMINANCE_PCT` | `0.35` | Dominant blocker share threshold (non-executed subset) |
+| `FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK` | `1` | Weekly safety cap for applied `.env` tuning changes |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `ADAPTIVE_JUDGE_COOLDOWN_ENABLED` | `true` | If `true`, cooldown is scaled by candidate quality score instead of fixed `JUDGE_COOLDOWN_MS` |
 | `ADAPTIVE_JUDGE_COOLDOWN_MIN_MS` | `60000` (1 min) | Lower bound for adaptive cooldown (best candidates) |

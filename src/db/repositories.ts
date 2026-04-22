@@ -57,6 +57,14 @@ export async function ensureIndexes(): Promise<void> {
 
   const sgs = await col<StrategyGateStateDoc>(collections.strategyGateState);
   await sgs.createIndex({ updated_at: -1 });
+
+  const fts = await col<FunnelTuningStateDoc>(collections.funnelTuningState);
+  await fts.createIndex({ updated_at: -1 });
+
+  const forp = await col<FunnelOptimizerReportDoc>(
+    collections.funnelOptimizerReports
+  );
+  await forp.createIndex({ generated_at: -1 });
 }
 
 export async function upsertOhlcBatch(rows: Ohlc1m[]): Promise<void> {
@@ -257,6 +265,19 @@ export async function tradesForDay(istDate: string): Promise<TradeLogDoc[]> {
     .toArray();
 }
 
+export async function fetchTradesInRange(
+  from: Date,
+  to: Date,
+  executionEnv?: TradeLogDoc["env"]
+): Promise<TradeLogDoc[]> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const filter: Record<string, unknown> = {
+    entry_time: { $gte: from, $lte: to },
+  };
+  if (executionEnv) filter.env = executionEnv;
+  return c.find(filter).sort({ entry_time: 1 }).toArray();
+}
+
 export async function fetchExecutedTradesSince(
   from: Date,
   executionEnv?: TradeLogDoc["env"]
@@ -406,6 +427,33 @@ export interface StrategyGateStateDoc extends Document {
   updated_at: Date;
 }
 
+export interface FunnelTuningStateDoc extends Document {
+  _id: "current";
+  week_key: string;
+  applied_count: number;
+  last_applied_at?: Date;
+  last_action?: string;
+  updated_at: Date;
+}
+
+export interface FunnelOptimizerReportDoc extends Document {
+  generated_at: Date;
+  lookback_days: number;
+  from: Date;
+  to: Date;
+  total: number;
+  executed: number;
+  execution_rate: number;
+  dominant_blocker?: string;
+  blocker_share?: number;
+  recommendation?: string;
+  changes?: Array<{
+    key: string;
+    from: string;
+    to: string;
+  }>;
+}
+
 export async function getWeekendOptimizeCheckpoint(): Promise<WeekendOptimizeCheckpointDoc | null> {
   const c = await col<WeekendOptimizeCheckpointDoc>(
     collections.weekendOptimizeCheckpoint
@@ -481,4 +529,32 @@ export async function upsertStrategyGateState(
     },
     { upsert: true }
   );
+}
+
+export async function fetchFunnelTuningState(): Promise<FunnelTuningStateDoc | null> {
+  const c = await col<FunnelTuningStateDoc>(collections.funnelTuningState);
+  return c.findOne({ _id: "current" });
+}
+
+export async function upsertFunnelTuningState(
+  patch: Omit<FunnelTuningStateDoc, "_id" | "updated_at">
+): Promise<void> {
+  const c = await col<FunnelTuningStateDoc>(collections.funnelTuningState);
+  await c.updateOne(
+    { _id: "current" },
+    {
+      $set: {
+        ...patch,
+        updated_at: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+}
+
+export async function insertFunnelOptimizerReport(
+  doc: FunnelOptimizerReportDoc
+): Promise<void> {
+  const c = await col<FunnelOptimizerReportDoc>(collections.funnelOptimizerReports);
+  await c.insertOne(doc);
 }

@@ -20,6 +20,7 @@ import { runDiscoverySync } from "../services/discoveryRun.js";
 import { syncOhlcForRange } from "../services/marketSync.js";
 import { fetchTodayNewsContext } from "../services/news.js";
 import { ensureReplayNewsCoverage } from "../services/newsArchiveReplay.js";
+import { runFunnelOptimizer } from "../services/funnelOptimizer.js";
 import type {
   Ohlc1m,
   OperatorRunDoc,
@@ -99,6 +100,7 @@ interface SentinelSuggestion {
     | "replay-range"
     | "analyst"
     | "discovery"
+    | "funnel-optimize"
     | "repair-missing-days"
     | "wait";
   reason: string;
@@ -116,6 +118,7 @@ type MainMenuAction =
   | "replay-range"
   | "analyst"
   | "discovery"
+  | "funnel-optimize"
   | "help"
   | "exit";
 
@@ -180,6 +183,11 @@ const MAIN_MENU: MenuEntry[] = [
     action: "discovery",
     label: "Run nightly discovery from selected date",
     aliases: ["discovery", "nightly", "n"],
+  },
+  {
+    action: "funnel-optimize",
+    label: "Funnel optimizer (analyze / tune dominant blocker)",
+    aliases: ["funnel", "tune", "optimize"],
   },
   {
     action: "help",
@@ -602,6 +610,24 @@ function suggestNextAction(s: DailyStatus): SentinelSuggestion {
     };
   }
 
+  const execRate =
+    s.decisionFunnel.total > 0
+      ? s.decisionFunnel.executed / s.decisionFunnel.total
+      : 0;
+  const dominantBlock =
+    s.decisionFunnel.cooldownJudge >= s.decisionFunnel.riskVeto &&
+    s.decisionFunnel.cooldownJudge >= s.decisionFunnel.judgeDenyOrOther
+      ? "cooldown"
+      : s.decisionFunnel.riskVeto >= s.decisionFunnel.judgeDenyOrOther
+        ? "risk_veto"
+        : "deny_other";
+  if (s.decisionFunnel.total >= env.funnelOptimizerMinDecisions && execRate < 0.02) {
+    return {
+      action: "funnel-optimize",
+      reason: `Low execution rate ${(execRate * 100).toFixed(2)}% with dominant ${dominantBlock} blocker.`,
+    };
+  }
+
   if (mode === "EXECUTION") {
     return {
       action: "wait",
@@ -670,7 +696,7 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
@@ -683,11 +709,13 @@ function printHelp(): void {
   console.log("  6            # change date context");
   console.log("  8            # replay selected date");
   console.log("  9            # replay custom range");
+  console.log("  12           # funnel optimizer (analyze/tune)");
   console.log("  replay       # same as replay selected date");
   console.log("  range        # same as replay custom range");
   console.log("  repair       # same as repair missing days");
   console.log("  cooldown     # same as judge cooldown status");
   console.log("  daemon       # same as daemon control");
+  console.log("  funnel       # same as funnel optimizer");
   console.log("  date         # same as change date");
   console.log("  sentinel     # same as option 2");
   console.log("  help");
@@ -1217,6 +1245,58 @@ async function runNightlyDiscoveryForDate(
   });
 }
 
+async function runFunnelOptimizeInteractive(
+  rl: ReturnType<typeof createInterface>,
+  date: string
+): Promise<void> {
+  const lookbackRaw = await ask(
+    rl,
+    "Funnel optimizer lookback days",
+    String(env.funnelOptimizerLookbackDays)
+  );
+  const lookback = Math.max(1, Math.floor(Number(lookbackRaw) || env.funnelOptimizerLookbackDays));
+  const r = await runFunnelOptimizer({
+    lookbackDays: lookback,
+    executionEnv: env.executionEnv,
+    apply: false,
+  });
+
+  console.log(
+    `[ops][funnel] decisions=${r.summary.total} executed=${r.summary.executed} exec_rate=${(r.summary.executionRate * 100).toFixed(2)}%`
+  );
+  console.log(
+    `[ops][funnel] blockers risk_veto=${r.summary.riskVeto} cooldown_judge=${r.summary.cooldownJudge} cooldown_risk=${r.summary.cooldownRiskVeto} deny_other=${r.summary.judgeDenyOrOther}`
+  );
+  if (r.summary.dominantBlocker) {
+    console.log(
+      `[ops][funnel] dominant=${r.summary.dominantBlocker} share=${(r.summary.dominantBlockerShare * 100).toFixed(1)}%`
+    );
+  }
+  if (!r.recommendation) {
+    console.log("[ops][funnel] recommendation: none (insufficient sample/dominance)");
+    return;
+  }
+  console.log(`[ops][funnel] recommendation: ${r.recommendation.reason}`);
+  for (const c of r.recommendation.changes) {
+    console.log(`  - ${c.key}: ${c.from} -> ${c.to} (${c.reason})`);
+  }
+  const apply = await confirm(
+    rl,
+    "Apply these changes to local .env now? (daemon restart required)",
+    false
+  );
+  if (!apply) return;
+
+  const applied = await runFunnelOptimizer({
+    lookbackDays: lookback,
+    executionEnv: env.executionEnv,
+    apply: true,
+  });
+  console.log(
+    `[ops][funnel] apply=${applied.applied ? "YES" : "NO"} (${applied.applyReason ?? "n/a"})`
+  );
+}
+
 async function runSuggestedAction(
   rl: ReturnType<typeof createInterface>,
   date: string,
@@ -1248,6 +1328,10 @@ async function runSuggestedAction(
   }
   if (suggestion.action === "discovery") {
     await runNightlyDiscoveryForDate(rl, date);
+    return;
+  }
+  if (suggestion.action === "funnel-optimize") {
+    await runFunnelOptimizeInteractive(rl, date);
     return;
   }
   if (suggestion.action === "repair-missing-days") {
@@ -1327,6 +1411,10 @@ async function interactive(date: string): Promise<void> {
       }
       if (action === "discovery") {
         await runNightlyDiscoveryForDate(rl, currentDate);
+        continue;
+      }
+      if (action === "funnel-optimize") {
+        await runFunnelOptimizeInteractive(rl, currentDate);
         continue;
       }
       if (action === "help") {

@@ -58,6 +58,7 @@ This opens the interactive operator console. Use it to:
 - Replay a custom date range in side-by-side comparison mode (baseline realistic + research microstructure profile).
 - Run analyst for a missed day.
 - Run nightly discovery manually.
+- Run funnel optimizer to tune the dominant blocker from recent decisions.
 
 Operator menu quality-of-life:
 
@@ -65,6 +66,7 @@ Operator menu quality-of-life:
 - Use `Run suggested action (sentinel)` to auto-run the best next step based on gaps and current phase.
 - Use `Judge cooldown status` to see whether strategy:ticker judge cooldown keys are active right now and remaining time.
 - Use `Repair missing trading days (guided)` to repair backlog days one by one (oldest to newest).
+- Use `Funnel optimizer` to analyze why entries are not executing and apply one safe `.env` tuning change.
 - Type aliases like `date`, `replay`, `range`, `prepare`, `analyst`, `help`.
 - After changing date, the CLI asks what you want to do next for that date.
 
@@ -84,6 +86,8 @@ Quick non-interactive checks:
 ```bash
 bun run ops -- --status
 bun run ops -- --date 2026-04-21 --status
+bun run funnel-optimize -- --days 5
+bun run funnel-optimize -- --days 5 --apply
 ```
 
 ## AI Operator CLI (contextual)

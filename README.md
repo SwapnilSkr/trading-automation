@@ -225,6 +225,7 @@ curl http://127.0.0.1:3000/health
 | `bun run risk-report` | Summarize hard risk/market gate blocks from `trades.risk_eval` |
 | `bun run shadow-eval-report` | Summarize shadow layer-1 vs layer-2 disagreement metrics from `trades.shadow_eval` |
 | `bun run confidence-calibration-report` | Compare raw vs calibrated confidence buckets and decision paths vs realized outcomes |
+| `bun run funnel-optimize` | Analyze decision funnel blockers and suggest/apply one safe weekly tuning change |
 | `bun run monte-carlo-report` | Randomize backtest trade order to estimate max drawdown distribution |
 | `bun run walk-forward-backtest` | Run rolling out-of-sample backtest windows |
 | `bun run analyst` | Post-mortem: winners vs losers → lessons_learned |
@@ -257,6 +258,7 @@ bun run ops -- --date 2026-04-21 --replay
 Use `ops` when you missed part of a day or started late. It shows whether the watchlist snapshot, active watchlist, news, OHLC coverage, analyst lesson, replay rows, and recent operator actions exist for a date.
 `ops` also audits the last `OPS_MISSING_TRADING_DAYS_LOOKBACK` trading days and lists incomplete days (with exact missing reasons), so you can repair backlog days one by one.
 `ops` now also prints a decision funnel for the selected day (`total -> risk veto -> cooldown -> deny/other -> executed`) so you can see exactly where trades are getting blocked.
+`ops` includes a `Funnel optimizer` menu action that inspects recent funnel blockers and can apply one guarded `.env` tuning change (weekly cap) to improve throughput.
 From the menu you can run `Repair missing trading days (guided)`, repair a single day, sync missing bars, run a replay, run analyst, or run discovery.
 `ops` includes an `ops-sentinel` recommendation and a one-click `Run suggested action (sentinel)` entry.
 For custom range replay, `ops` can also run side-by-side comparison mode: baseline realism profile and a research profile (softer microstructure friction) without changing default backtest logic.
@@ -300,6 +302,8 @@ bun run risk-report -- --days 5 --env PAPER
 bun run confidence-calibration-report -- --days 20 --env PAPER --field raw
 bun run confidence-calibration-report -- --days 20 --env PAPER --field final
 bun run confidence-calibration-report -- --source backtest --field raw
+bun run funnel-optimize -- --days 5
+bun run funnel-optimize -- --days 5 --apply
 bun run monte-carlo-report -- --last --iters 1000
 bun run walk-forward-backtest -- --from 2026-03-01 --to 2026-04-17 --watchlist-snapshots --skip-judge
 ```

@@ -33,5 +33,7 @@ export const collections = {
   weekendOptimizeCheckpoint: "weekend_optimize_checkpoint",
   pineconeGovernorState: "pinecone_governor_state",
   strategyGateState: "strategy_gate_state",
+  funnelTuningState: "funnel_tuning_state",
+  funnelOptimizerReports: "funnel_optimizer_reports",
   operatorRuns: "operator_runs",
 } as const;

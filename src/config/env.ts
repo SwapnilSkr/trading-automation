@@ -48,6 +48,14 @@ export const env = {
   opsAiModel: process.env.OPS_AI_MODEL ?? "google/gemma-4-31b-it:free",
   /** Ops CLI: how many recent trading days to audit for missing artifacts */
   opsMissingTradingDaysLookback: num("OPS_MISSING_TRADING_DAYS_LOOKBACK", 10),
+  /** Funnel optimizer: lookback days for dominant blocker analysis */
+  funnelOptimizerLookbackDays: num("FUNNEL_OPTIMIZER_LOOKBACK_DAYS", 5),
+  /** Funnel optimizer: minimum decisions required before tuning */
+  funnelOptimizerMinDecisions: num("FUNNEL_OPTIMIZER_MIN_DECISIONS", 120),
+  /** Funnel optimizer: dominant blocker share threshold (0-1) */
+  funnelOptimizerDominancePct: num("FUNNEL_OPTIMIZER_DOMINANCE_PCT", 0.35),
+  /** Funnel optimizer: max env tuning applies allowed per IST week */
+  funnelOptimizerMaxChangesPerWeek: num("FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK", 1),
   /** Cheaper model for `bun run backtest` (OpenRouter slug, e.g. Gemini Flash) */
   judgeModelBacktest:
     process.env.JUDGE_MODEL_BACKTEST ?? "google/gemini-2.0-flash-001",
