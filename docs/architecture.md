@@ -352,12 +352,15 @@ TriggerHit[]
     │  isStrategyAllowed() → false if PF < 0.8 or WR < 30% over last 20 trades
     │  minimum 10 trades required before gating kicks in
     │
-    ▼ GATE 3: Hard Institutional Risk Gate
+    ▼ GATE 3: Risk / Market / Time Policy
     │  evaluateTimeWindow(strategy, ts)
+    │  evaluateSessionPolicy(open/mid/late block)
     │  evaluateSafety(daily/3d/weekly drawdown + open count)
     │  evaluateMarketRegime(NIFTY change + breadth)
     │  evaluatePortfolioRisk(sector/side/correlation/exposure)
-    │  blocked decisions persist with risk_eval + market_eval
+    │  catastrophic states hard-block
+    │  mild crowding/weakness apply size throttles + confidence floors
+    │  decisions persist with risk_eval + market_eval (hard + soft reasons)
     │
     ▼ SHADOW: Layer-1 Veto Candidate
     │  evaluate volume z-score + ATR% thresholds

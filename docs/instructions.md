@@ -75,6 +75,8 @@ Layman note:
 - If your max positions are already full, it can replace the weakest open trade only when a clearly better new setup appears.
 - Judge cooldown is now adaptive: stronger setups are retried sooner, weaker setups wait longer.
 - Confidence is now dual-tracked: `ai_confidence_raw` (model output) and calibrated `ai_confidence` (used by sizing logic).
+- Mild crowding is now usually throttled (smaller quantity) instead of instantly vetoed.
+- Session policy is time-aware: strict near open, normal midday, cautious late session.
 
 Quick non-interactive checks:
 
@@ -223,3 +225,17 @@ How to read it:
 - `raw` = what the model said.
 - `final` = after runtime calibration based on recent realized trades.
 - If `final` buckets are more stable than `raw`, keep calibration enabled.
+
+## Throughput Tuning (Safe)
+
+If too many candidates are still blocked, tune these first (do not raise hard caps first):
+
+```bash
+RISK_SOFT_THROTTLES_ENABLED=true
+SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER=0.70
+SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER=0.80
+SOFT_CORRELATION_HARD_BLOCK=0.90
+SESSION_OPEN_CONFIDENCE_FLOOR=0.62
+SESSION_LATE_CONFIDENCE_FLOOR=0.67
+MARKET_WEAK_CONFIDENCE_FLOOR=0.62
+```

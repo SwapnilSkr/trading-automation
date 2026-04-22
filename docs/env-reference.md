@@ -181,17 +181,32 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `WEEKLY_DRAWDOWN_LIMIT` | `50000` | Hard stop if last 7 calendar days' realized PnL ≤ -₹50,000 |
 | `CONSECUTIVE_LOSS_THROTTLE` | `3` | After this many realized losses, size is throttled |
 | `LOSS_THROTTLE_SIZE_MULTIPLIER` | `0.5` | Qty multiplier while consecutive-loss throttle is active |
+| `RISK_SOFT_THROTTLES_ENABLED` | `true` | Convert non-catastrophic portfolio crowding into size penalties instead of hard veto |
+| `SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER` | `0.75` | Size multiplier when sector cap is exceeded (soft mode) |
+| `SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER` | `0.65` | Size multiplier when same-side cap is exceeded (soft mode) |
+| `SOFT_CORRELATION_HARD_BLOCK` | `0.9` | Correlation above this remains hard-blocked |
+| `SOFT_CORRELATION_MIN_SIZE_MULTIPLIER` | `0.5` | Minimum size multiplier as correlation nears hard block |
 | `MARKET_GATE_ENABLED` | `true` | Enable NIFTY/breadth hard gate |
 | `MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT` | `-1.0` | Blocks long breakout strategies when NIFTY change is below/equal this |
 | `MARKET_BLOCK_LONG_BREAKOUTS_BREADTH` | `0.3` | Blocks long breakout strategies when watchlist green ratio is below this |
 | `MARKET_WEAK_NIFTY_PCT` | `-0.5` | Weak-market threshold for size reduction |
 | `MARKET_WEAK_BREADTH` | `0.4` | Weak-breadth threshold for size reduction |
 | `MARKET_WEAK_SIZE_MULTIPLIER` | `0.5` | Qty multiplier in weak market conditions |
+| `MARKET_WEAK_CONFIDENCE_FLOOR` | `0.62` | Minimum calibrated confidence required in weak market/soft-breakout conditions |
 | `TIME_WINDOWS_ENABLED` | `true` | Enable strategy-specific fresh-entry windows |
 | `NO_FRESH_ENTRIES_AFTER` | `14:30` | Blocks new entries after this IST time |
 | `ORB_ENTRY_START` / `ORB_ENTRY_END` | `09:30` / `11:30` | ORB and fakeout windows |
 | `VWAP_ENTRY_START` / `VWAP_ENTRY_END` | `10:00` / `14:00` | VWAP and EMA windows |
 | `MEAN_REV_ENTRY_START` / `MEAN_REV_ENTRY_END` | `10:00` / `14:30` | Mean-reversion window |
+| `SESSION_POLICY_ENABLED` | `true` | Applies time-block policy multipliers and confidence floors |
+| `SESSION_OPEN_STRICT_START` / `SESSION_OPEN_STRICT_END` | `09:30` / `10:30` | Stricter open block |
+| `SESSION_OPEN_SIZE_MULTIPLIER` / `SESSION_OPEN_CONFIDENCE_FLOOR` | `0.8` / `0.62` | Open block position-size and confidence requirements |
+| `SESSION_MID_START` / `SESSION_MID_END` | `10:30` / `13:30` | Normal block |
+| `SESSION_MID_SIZE_MULTIPLIER` / `SESSION_MID_CONFIDENCE_FLOOR` | `1.0` / `0.5` | Midday policy defaults |
+| `SESSION_LATE_START` / `SESSION_LATE_END` | `13:30` / `15:00` | Late block |
+| `SESSION_LATE_SIZE_MULTIPLIER` / `SESSION_LATE_CONFIDENCE_FLOOR` | `0.75` / `0.67` | Late-session caution defaults |
+| `SESSION_LOW_CONVICTION_BLOCK_AFTER` | `15:00` | After this, only high-confidence entries pass |
+| `SESSION_LOW_CONVICTION_MIN_CONFIDENCE` | `0.72` | Confidence floor used after low-conviction cutoff |
 | `EMA20_RETEST_MIN_VOLUME_Z` | `0` | EMA20 break/retest minimum volume z-score |
 | `VWAP_CONTINUATION_MIN_VOLUME_Z` | `0.5` | VWAP continuation minimum volume z-score |
 | `RETEST_MAX_BARS_AFTER_BREAK` | `20` | Break/retest must happen within this many bars |
@@ -200,6 +215,10 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 Execution note: with `LIVE_EXEC_SYNC_ENABLED=true`, the daemon no longer depends on post-market `SYNC` alone for intraday bars; it performs periodic top-up sync during EXECUTION and on-demand ticker rescue sync when bar count is insufficient.
 
 Ticker metadata note: sector caps use `data/ind_nifty100list.csv`; beta exposure uses `data/ticker_metadata.json` overrides and defaults unknown beta to `1.0`.
+
+Policy note:
+- Hard blocks remain for catastrophic risk (`daily/rolling/weekly drawdown`, gross/beta exhaustion, very high correlation).
+- Mild crowding now flows through size penalties (`risk_eval.soft_penalties`, `risk_eval.size_multiplier`) so throughput improves without opening risk floodgates.
 
 ---
 

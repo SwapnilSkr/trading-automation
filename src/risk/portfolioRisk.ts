@@ -25,6 +25,8 @@ export interface PortfolioRiskInput {
 export interface PortfolioRiskEval {
   allowed: boolean;
   reasons: string[];
+  soft_penalties: string[];
+  size_multiplier: number;
   sector: string;
   beta: number;
   open_position_count: number;
@@ -116,6 +118,8 @@ export async function evaluatePortfolioRisk(
     ticker: normalizeTicker(p.ticker),
   }));
   const reasons: string[] = [];
+  const softPenalties: string[] = [];
+  let sizeMultiplier = 1;
 
   const sameTicker = positions.some((p) => p.ticker === ticker);
   if (sameTicker) reasons.push(`${ticker} already has an open position`);
@@ -124,12 +128,26 @@ export async function evaluatePortfolioRisk(
     (p) => getTickerMetadata(p.ticker).sector === meta.sector
   ).length;
   if (sameSectorPositions >= env.maxSectorPositions) {
-    reasons.push(`sector cap ${meta.sector}: ${sameSectorPositions}/${env.maxSectorPositions}`);
+    if (env.riskSoftThrottlesEnabled) {
+      sizeMultiplier *= env.softSectorOverflowSizeMultiplier;
+      softPenalties.push(
+        `sector soft-throttle ${meta.sector}: ${sameSectorPositions}/${env.maxSectorPositions}`
+      );
+    } else {
+      reasons.push(`sector cap ${meta.sector}: ${sameSectorPositions}/${env.maxSectorPositions}`);
+    }
   }
 
   const sameSidePositions = positions.filter((p) => p.side === input.side).length;
   if (sameSidePositions >= env.maxSameSidePositions) {
-    reasons.push(`same-side cap ${input.side}: ${sameSidePositions}/${env.maxSameSidePositions}`);
+    if (env.riskSoftThrottlesEnabled) {
+      sizeMultiplier *= env.softSameSideOverflowSizeMultiplier;
+      softPenalties.push(
+        `same-side soft-throttle ${input.side}: ${sameSidePositions}/${env.maxSameSidePositions}`
+      );
+    } else {
+      reasons.push(`same-side cap ${input.side}: ${sameSidePositions}/${env.maxSameSidePositions}`);
+    }
   }
 
   const existingGrossNotional = positions.reduce(
@@ -196,7 +214,24 @@ export async function evaluatePortfolioRisk(
     if (valid.length > 0) {
       maxCorrelation = Math.max(...valid);
       if (maxCorrelation > env.maxCorrelationWithOpen) {
-        reasons.push(`correlation ${maxCorrelation.toFixed(2)} > ${env.maxCorrelationWithOpen.toFixed(2)}`);
+        if (
+          env.riskSoftThrottlesEnabled &&
+          maxCorrelation <= env.softCorrelationHardBlock
+        ) {
+          const lo = env.maxCorrelationWithOpen;
+          const hi = Math.max(lo + 0.01, env.softCorrelationHardBlock);
+          const t = Math.max(0, Math.min(1, (maxCorrelation - lo) / (hi - lo)));
+          const minMult = Math.max(0.05, Math.min(1, env.softCorrelationMinSizeMultiplier));
+          const corrMult = 1 - t * (1 - minMult);
+          sizeMultiplier *= corrMult;
+          softPenalties.push(
+            `correlation soft-throttle ${maxCorrelation.toFixed(2)} (x${corrMult.toFixed(2)})`
+          );
+        } else {
+          reasons.push(
+            `correlation ${maxCorrelation.toFixed(2)} > ${env.maxCorrelationWithOpen.toFixed(2)}`
+          );
+        }
       }
     }
   }
@@ -204,6 +239,8 @@ export async function evaluatePortfolioRisk(
   return {
     allowed: reasons.length === 0,
     reasons,
+    soft_penalties: softPenalties,
+    size_multiplier: Math.max(0.05, Math.min(1, sizeMultiplier)),
     sector: meta.sector,
     beta: meta.beta,
     open_position_count: positions.length,

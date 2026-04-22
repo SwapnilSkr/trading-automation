@@ -87,7 +87,7 @@ Fixed-% exits (fallback when ATR unavailable):
 **Signal pipeline (EXECUTION phase, per ticker, every 60s):**
 1. **Vol-regime gate** — classify intraday vol as LOW/MID/HIGH; suppress strategies that don't work in current regime
 2. **Strategy auto-gate** — disable strategies with rolling PF < 0.8 or WR < 30% over last 20 trades
-3. **Hard risk/market/time gates** — daily/weekly drawdown, sector/side/correlation/exposure caps, NIFTY/breadth, strategy-specific windows
+3. **Risk/market/time policy** — catastrophic conditions hard-block, mild crowding/weak-market conditions downsize and raise confidence floor, strategy-specific windows still apply
 4. **Shadow layer-1 eval (optional)** — cheap veto candidate (`volume z-score`, `ATR%`) logged for offline calibration; observe-only unless explicitly enforced
 5. **Pinecone consensus gate** — require 3+ strong same-strategy neighbors and ≥60% weighted win rate before auto-approval
 6. **Judge (LLM)** — model from `.env` (`JUDGE_MODEL`) via OpenRouter with enriched prompt (price action, indicators, track record, lessons)
@@ -423,6 +423,29 @@ JUDGE_MODEL=deepseek/deepseek-chat
 # Lessons feedback loop
 LESSONS_FEEDBACK_ENABLED=true # inject yesterday's lessons into judge prompt
 
+# Soft risk throttles + session policy
+RISK_SOFT_THROTTLES_ENABLED=true
+SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER=0.75
+SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER=0.65
+SOFT_CORRELATION_HARD_BLOCK=0.90
+SOFT_CORRELATION_MIN_SIZE_MULTIPLIER=0.50
+MARKET_WEAK_CONFIDENCE_FLOOR=0.62
+SESSION_POLICY_ENABLED=true
+SESSION_OPEN_STRICT_START=09:30
+SESSION_OPEN_STRICT_END=10:30
+SESSION_OPEN_SIZE_MULTIPLIER=0.80
+SESSION_OPEN_CONFIDENCE_FLOOR=0.62
+SESSION_MID_START=10:30
+SESSION_MID_END=13:30
+SESSION_MID_SIZE_MULTIPLIER=1.00
+SESSION_MID_CONFIDENCE_FLOOR=0.50
+SESSION_LATE_START=13:30
+SESSION_LATE_END=15:00
+SESSION_LATE_SIZE_MULTIPLIER=0.75
+SESSION_LATE_CONFIDENCE_FLOOR=0.67
+SESSION_LOW_CONVICTION_BLOCK_AFTER=15:00
+SESSION_LOW_CONVICTION_MIN_CONFIDENCE=0.72
+
 # Confidence calibration (runtime)
 CONFIDENCE_CALIBRATION_ENABLED=true # blend raw confidence with realized outcomes
 CONFIDENCE_CALIBRATION_LOOKBACK_DAYS=45
@@ -455,6 +478,8 @@ SHADOW_EVAL_ENFORCE_LAYER1=true
 - Profit factor < 1 and win rate < 40%: entries are bad, tighten Z-score threshold or ORB volume filter
 - Win rate OK but large drawdown: tighten `ATR_STOP_MULTIPLE` or `EXIT_STOP_PCT`
 - Good profit factor but few trades: reduce adaptive upper cooldown bound (`ADAPTIVE_JUDGE_COOLDOWN_MAX_MS`) or relax Pinecone gate
+- Too many risk vetoes from crowding: keep `RISK_SOFT_THROTTLES_ENABLED=true` and tune soft multipliers before raising hard caps
+- Too many low-quality fills near open/late session: increase session confidence floors, not global hard caps
 - Strategy auto-gate too aggressive: lower `STRATEGY_GATE_MIN_PF` or increase `STRATEGY_GATE_WINDOW`
 - ATR sizing producing too-large positions: lower `RISK_PER_TRADE_PCT` or `MAX_QTY_PER_TRADE`
 - Raw confidence and realized outcomes diverge: compare `--field raw` vs `--field final` in calibration report, then tune `CONFIDENCE_CALIBRATION_WEIGHT`

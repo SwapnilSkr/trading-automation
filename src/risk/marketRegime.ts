@@ -14,9 +14,11 @@ export interface MarketRegimeSnapshot {
 export interface MarketRegimeEval {
   allowed: boolean;
   reasons: string[];
+  soft_penalties: string[];
   nifty_change_pct?: number;
   breadth_green_ratio?: number;
   size_multiplier: number;
+  confidence_floor: number;
 }
 
 function dayChangePct(bars: Ohlc1m[]): number | undefined {
@@ -79,20 +81,39 @@ export function evaluateMarketRegime(
   snapshot?: MarketRegimeSnapshot
 ): MarketRegimeEval {
   if (!env.marketGateEnabled || !snapshot) {
-    return { allowed: true, reasons: [], size_multiplier: 1 };
+    return {
+      allowed: true,
+      reasons: [],
+      soft_penalties: [],
+      size_multiplier: 1,
+      confidence_floor: 0,
+    };
   }
 
   const reasons: string[] = [];
+  const softPenalties: string[] = [];
   const weakReasons: string[] = [];
+  let confidenceFloor = 0;
   const isLongBreakout = side === "BUY" && isLongBreakoutStrategy(strategy);
   const nifty = snapshot.niftyChangePct;
   const breadth = snapshot.breadthGreenRatio;
 
-  if (isLongBreakout && nifty !== undefined && nifty <= env.marketBlockLongBreakoutsNiftyPct) {
-    reasons.push(`NIFTY ${nifty.toFixed(2)}% <= ${env.marketBlockLongBreakoutsNiftyPct}%`);
-  }
-  if (isLongBreakout && breadth !== undefined && breadth < env.marketBlockLongBreakoutsBreadth) {
-    reasons.push(`breadth ${(breadth * 100).toFixed(0)}% < ${(env.marketBlockLongBreakoutsBreadth * 100).toFixed(0)}%`);
+  const niftyHardWeak =
+    nifty !== undefined && nifty <= env.marketBlockLongBreakoutsNiftyPct;
+  const breadthHardWeak =
+    breadth !== undefined && breadth < env.marketBlockLongBreakoutsBreadth;
+
+  // For long breakout families, require both hard conditions to kill.
+  // A single weak dimension is throttled instead of vetoed.
+  if (isLongBreakout && niftyHardWeak && breadthHardWeak) {
+    reasons.push(
+      `NIFTY ${nifty!.toFixed(2)}% <= ${env.marketBlockLongBreakoutsNiftyPct}% and breadth ${(breadth! * 100).toFixed(0)}% < ${(env.marketBlockLongBreakoutsBreadth * 100).toFixed(0)}%`
+    );
+  } else if (isLongBreakout && (niftyHardWeak || breadthHardWeak)) {
+    softPenalties.push(
+      `breakout soft-throttle: ${niftyHardWeak ? `NIFTY ${nifty!.toFixed(2)}%` : `breadth ${(breadth! * 100).toFixed(0)}%`}`
+    );
+    confidenceFloor = Math.max(confidenceFloor, env.marketWeakConfidenceFloor);
   }
 
   if (nifty !== undefined && nifty <= env.marketWeakNiftyPct) {
@@ -101,12 +122,17 @@ export function evaluateMarketRegime(
   if (breadth !== undefined && breadth < env.marketWeakBreadth) {
     weakReasons.push(`weak breadth ${(breadth * 100).toFixed(0)}%`);
   }
+  if (weakReasons.length > 0) {
+    confidenceFloor = Math.max(confidenceFloor, env.marketWeakConfidenceFloor);
+  }
 
   return {
     allowed: reasons.length === 0,
     reasons,
+    soft_penalties: [...softPenalties, ...weakReasons],
     nifty_change_pct: nifty,
     breadth_green_ratio: breadth,
     size_multiplier: weakReasons.length > 0 ? env.marketWeakSizeMultiplier : 1,
+    confidence_floor: confidenceFloor,
   };
 }

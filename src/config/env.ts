@@ -306,6 +306,16 @@ export const env = {
   consecutiveLossThrottle: num("CONSECUTIVE_LOSS_THROTTLE", 3),
   /** Position-size multiplier once consecutive loss throttle is active */
   lossThrottleSizeMultiplier: num("LOSS_THROTTLE_SIZE_MULTIPLIER", 0.5),
+  /** If true, non-catastrophic portfolio breaches use size throttles instead of hard veto */
+  riskSoftThrottlesEnabled: bool("RISK_SOFT_THROTTLES_ENABLED", true),
+  /** Size multiplier when sector cap is exceeded under soft-throttle mode */
+  softSectorOverflowSizeMultiplier: num("SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER", 0.75),
+  /** Size multiplier when same-side cap is exceeded under soft-throttle mode */
+  softSameSideOverflowSizeMultiplier: num("SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER", 0.65),
+  /** Correlation above this level is treated as catastrophic and hard-blocked */
+  softCorrelationHardBlock: num("SOFT_CORRELATION_HARD_BLOCK", 0.9),
+  /** Minimum size multiplier reached as correlation approaches hard-block level */
+  softCorrelationMinSizeMultiplier: num("SOFT_CORRELATION_MIN_SIZE_MULTIPLIER", 0.5),
 
   // ── Market regime hard gates ───────────────────────────────────────────────
   marketGateEnabled: bool("MARKET_GATE_ENABLED", true),
@@ -314,6 +324,7 @@ export const env = {
   marketWeakNiftyPct: num("MARKET_WEAK_NIFTY_PCT", -0.5),
   marketWeakBreadth: num("MARKET_WEAK_BREADTH", 0.4),
   marketWeakSizeMultiplier: num("MARKET_WEAK_SIZE_MULTIPLIER", 0.5),
+  marketWeakConfidenceFloor: num("MARKET_WEAK_CONFIDENCE_FLOOR", 0.62),
 
   // ── Strategy time windows ─────────────────────────────────────────────────
   timeWindowsEnabled: bool("TIME_WINDOWS_ENABLED", true),
@@ -326,6 +337,23 @@ export const env = {
   meanRevEntryEnd: str("MEAN_REV_ENTRY_END", "14:30"),
   defaultEntryStart: str("DEFAULT_ENTRY_START", "09:30"),
   defaultEntryEnd: str("DEFAULT_ENTRY_END", "14:30"),
+
+  // ── Session-aware execution policy ────────────────────────────────────────
+  sessionPolicyEnabled: bool("SESSION_POLICY_ENABLED", true),
+  sessionOpenStrictStart: str("SESSION_OPEN_STRICT_START", "09:30"),
+  sessionOpenStrictEnd: str("SESSION_OPEN_STRICT_END", "10:30"),
+  sessionOpenSizeMultiplier: num("SESSION_OPEN_SIZE_MULTIPLIER", 0.8),
+  sessionOpenConfidenceFloor: num("SESSION_OPEN_CONFIDENCE_FLOOR", 0.62),
+  sessionMidStart: str("SESSION_MID_START", "10:30"),
+  sessionMidEnd: str("SESSION_MID_END", "13:30"),
+  sessionMidSizeMultiplier: num("SESSION_MID_SIZE_MULTIPLIER", 1.0),
+  sessionMidConfidenceFloor: num("SESSION_MID_CONFIDENCE_FLOOR", 0.5),
+  sessionLateStart: str("SESSION_LATE_START", "13:30"),
+  sessionLateEnd: str("SESSION_LATE_END", "15:00"),
+  sessionLateSizeMultiplier: num("SESSION_LATE_SIZE_MULTIPLIER", 0.75),
+  sessionLateConfidenceFloor: num("SESSION_LATE_CONFIDENCE_FLOOR", 0.67),
+  sessionLowConvictionBlockAfter: str("SESSION_LOW_CONVICTION_BLOCK_AFTER", "15:00"),
+  sessionLowConvictionMinConfidence: num("SESSION_LOW_CONVICTION_MIN_CONFIDENCE", 0.72),
 
   // ── Trigger quality gates ─────────────────────────────────────────────────
   ema20RetestMinVolumeZ: num("EMA20_RETEST_MIN_VOLUME_Z", 0),

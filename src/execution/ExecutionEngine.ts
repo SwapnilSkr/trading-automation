@@ -64,6 +64,7 @@ import {
   type PortfolioPosition,
 } from "../risk/portfolioRisk.js";
 import { evaluateTimeWindow } from "../risk/timeWindow.js";
+import { evaluateSessionPolicy } from "../risk/sessionPolicy.js";
 import { getTickerMetadata, getTickerSector } from "../market/tickerMetadata.js";
 import { classifyVolRegimeFromCandles } from "../market/volRegime.js";
 import {
@@ -702,14 +703,6 @@ export class ExecutionEngine {
     let executableTriggers = gatedTriggers;
     if (!backtest && gatedTriggers.length > 0) {
       const positions = this.openPositionsForRisk();
-      const sameSideCounts = positions.reduce(
-        (acc, p) => {
-          if (p.side === "BUY") acc.buy += 1;
-          else acc.sell += 1;
-          return acc;
-        },
-        { buy: 0, sell: 0 }
-      );
       const grossNotional = positions.reduce(
         (s, p) => s + Math.abs(p.entryPrice * p.qty),
         0
@@ -724,12 +717,6 @@ export class ExecutionEngine {
 
       executableTriggers = gatedTriggers.filter((t) => {
         if (noExposureHeadroom) return false;
-        if (t.side === "BUY" && sameSideCounts.buy >= env.maxSameSidePositions) {
-          return false;
-        }
-        if (t.side === "SELL" && sameSideCounts.sell >= env.maxSameSidePositions) {
-          return false;
-        }
         return true;
       });
       if (
@@ -854,16 +841,21 @@ export class ExecutionEngine {
     const snap = normalizeSnapshot(hit.snapshot);
     const safetyEval = evaluateSafety(this.safety, this.openCount);
     const timeEval = evaluateTimeWindow(hit.strategy, entryTime);
+    const sessionEval = evaluateSessionPolicy(entryTime);
     const marketEval = evaluateMarketRegime(
       hit.strategy,
       side,
       ctx.marketSnapshot
     );
+    const prePortfolioRiskMultiplier = Math.max(
+      0.05,
+      safetyEval.throttleMultiplier * sessionEval.size_multiplier
+    );
     const preliminarySizing = this.computeSizing(
       entryPrice,
       atrValue,
       0.5,
-      safetyEval.throttleMultiplier,
+      prePortfolioRiskMultiplier,
       marketEval.size_multiplier
     );
     const portfolioEval = await evaluatePortfolioRisk({
@@ -900,8 +892,18 @@ export class ExecutionEngine {
         ...portfolioEval,
         allowed: hardGateReasons.length === 0,
         reasons: hardGateReasons,
+        soft_penalties: [
+          ...(portfolioEval.soft_penalties ?? []),
+          ...sessionEval.reasons,
+        ],
+        size_multiplier: portfolioEval.size_multiplier,
       },
-      market_eval: marketEval,
+      market_eval: {
+        ...marketEval,
+        session_phase: sessionEval.phase,
+        session_size_multiplier: sessionEval.size_multiplier,
+        session_confidence_floor: sessionEval.confidence_floor,
+      },
       sizing_eval: {
         base_qty: preliminarySizing.baseQty,
         final_qty:
@@ -1046,21 +1048,38 @@ export class ExecutionEngine {
     }
 
     const calibratedConfidence = this.calibratedConfidence(judge.confidence);
+    const minConfidenceRequired = Math.max(
+      marketEval.confidence_floor ?? 0,
+      sessionEval.confidence_floor
+    );
+    if (judge.approve && calibratedConfidence < minConfidenceRequired) {
+      judge = {
+        approve: false,
+        confidence: calibratedConfidence,
+        reasoning: `CONFIDENCE_FLOOR: ${calibratedConfidence.toFixed(2)} < ${minConfidenceRequired.toFixed(2)}; ${judge.reasoning}`,
+      };
+    }
     const finalDecision: "APPROVE" | "DENY" = judge.approve ? "APPROVE" : "DENY";
     const counterfactualTwoLayerDecision: "APPROVE" | "DENY" =
       layer1.pass && judge.approve ? "APPROVE" : "DENY";
 
     if (!backtest && env.liveDebugScans) {
       console.log(
-        `[Decision] ${ticker} ${hit.strategy} ${hit.side} approve=${judge.approve} via=${decisionVia} l1=${layer1.pass ? "PASS" : "BLOCK"} cf2=${counterfactualTwoLayerDecision} conf=${judge.confidence.toFixed(2)} reason="${shortReason(judge.reasoning)}"`
+        `[Decision] ${ticker} ${hit.strategy} ${hit.side} approve=${judge.approve} via=${decisionVia} l1=${layer1.pass ? "PASS" : "BLOCK"} cf2=${counterfactualTwoLayerDecision} conf_raw=${judge.confidence.toFixed(2)} conf_final=${calibratedConfidence.toFixed(2)} floor=${minConfidenceRequired.toFixed(2)} reason="${shortReason(judge.reasoning)}"`
       );
     }
 
+    const effectiveRiskMultiplier = Math.max(
+      0.05,
+      safetyEval.throttleMultiplier *
+        sessionEval.size_multiplier *
+        Math.max(0.05, portfolioEval.size_multiplier ?? 1)
+    );
     const sizingBase = this.computeSizing(
       entryPrice,
       atrValue,
       calibratedConfidence,
-      safetyEval.throttleMultiplier,
+      effectiveRiskMultiplier,
       marketEval.size_multiplier
     );
     const exposureFitQty =

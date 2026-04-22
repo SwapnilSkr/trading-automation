@@ -66,6 +66,8 @@ export interface TradeLogDoc extends Document {
   risk_eval?: {
     allowed: boolean;
     reasons: string[];
+    soft_penalties?: string[];
+    size_multiplier?: number;
     sector?: string;
     beta?: number;
     open_position_count?: number;
@@ -81,9 +83,14 @@ export interface TradeLogDoc extends Document {
   market_eval?: {
     allowed: boolean;
     reasons: string[];
+    soft_penalties?: string[];
     nifty_change_pct?: number;
     breadth_green_ratio?: number;
     size_multiplier?: number;
+    confidence_floor?: number;
+    session_phase?: "OPEN_STRICT" | "MIDDAY" | "LATE" | "OFF_HOURS";
+    session_size_multiplier?: number;
+    session_confidence_floor?: number;
   };
   sizing_eval?: {
     base_qty: number;
