@@ -21,6 +21,7 @@ import { syncOhlcForRange } from "../services/marketSync.js";
 import { fetchTodayNewsContext } from "../services/news.js";
 import { ensureReplayNewsCoverage } from "../services/newsArchiveReplay.js";
 import { runFunnelOptimizer } from "../services/funnelOptimizer.js";
+import { buildPhase8ValidationReport } from "../services/phase8Validation.js";
 import type {
   Ohlc1m,
   OperatorRunDoc,
@@ -101,6 +102,7 @@ interface SentinelSuggestion {
     | "analyst"
     | "discovery"
     | "funnel-optimize"
+    | "phase8-validate"
     | "repair-missing-days"
     | "wait";
   reason: string;
@@ -119,6 +121,7 @@ type MainMenuAction =
   | "analyst"
   | "discovery"
   | "funnel-optimize"
+  | "phase8-validate"
   | "help"
   | "exit";
 
@@ -188,6 +191,11 @@ const MAIN_MENU: MenuEntry[] = [
     action: "funnel-optimize",
     label: "Funnel optimizer (analyze / tune dominant blocker)",
     aliases: ["funnel", "tune", "optimize"],
+  },
+  {
+    action: "phase8-validate",
+    label: "Phase 8 validation (targets pass/fail)",
+    aliases: ["phase8", "validate", "kpi"],
   },
   {
     action: "help",
@@ -627,6 +635,12 @@ function suggestNextAction(s: DailyStatus): SentinelSuggestion {
       reason: `Low execution rate ${(execRate * 100).toFixed(2)}% with dominant ${dominantBlock} blocker.`,
     };
   }
+  if (now.hour >= 15 && now.minute >= 45) {
+    return {
+      action: "phase8-validate",
+      reason: "End-of-day window: run target KPI validation.",
+    };
+  }
 
   if (mode === "EXECUTION") {
     return {
@@ -696,7 +710,7 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `phase8`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
@@ -710,12 +724,14 @@ function printHelp(): void {
   console.log("  8            # replay selected date");
   console.log("  9            # replay custom range");
   console.log("  12           # funnel optimizer (analyze/tune)");
+  console.log("  13           # phase8 validation (target checks)");
   console.log("  replay       # same as replay selected date");
   console.log("  range        # same as replay custom range");
   console.log("  repair       # same as repair missing days");
   console.log("  cooldown     # same as judge cooldown status");
   console.log("  daemon       # same as daemon control");
   console.log("  funnel       # same as funnel optimizer");
+  console.log("  phase8       # same as phase8 validation");
   console.log("  date         # same as change date");
   console.log("  sentinel     # same as option 2");
   console.log("  help");
@@ -1297,6 +1313,42 @@ async function runFunnelOptimizeInteractive(
   );
 }
 
+async function runPhase8ValidationInteractive(
+  rl: ReturnType<typeof createInterface>
+): Promise<void> {
+  const lookbackRaw = await ask(
+    rl,
+    "Phase 8 lookback days",
+    String(env.phase8ValidationLookbackDays)
+  );
+  const lookback = Math.max(
+    1,
+    Math.floor(Number(lookbackRaw) || env.phase8ValidationLookbackDays)
+  );
+  const useLatestRun = await confirm(rl, "Use latest backtest run for replay PF?", true);
+  const r = await buildPhase8ValidationReport({
+    lookbackDays: lookback,
+    executionEnv: env.executionEnv,
+    useLatestBacktestRun: useLatestRun,
+  });
+  const k = r.kpis;
+  const t = r.targets;
+  const c = r.checks;
+  console.log(
+    `[ops][phase8] decisions=${k.decisions} executed=${k.executed} exec_rate=${(k.executionRate * 100).toFixed(2)}% target=${(t.execRateMin * 100).toFixed(1)}..${(t.execRateMax * 100).toFixed(1)}% ${c.execRateOk ? "PASS" : "FAIL"}`
+  );
+  console.log(
+    `[ops][phase8] losing_day_pct=${(k.losingDayPct * 100).toFixed(2)}% target<=${(t.losingDayPctMax * 100).toFixed(1)}% ${c.losingDayPctOk ? "PASS" : "FAIL"}`
+  );
+  console.log(
+    `[ops][phase8] worst_daily_loss=₹${k.worstDailyLoss.toFixed(0)} target<=₹${t.maxDailyLoss.toFixed(0)} ${c.maxDailyLossOk ? "PASS" : "FAIL"}`
+  );
+  console.log(
+    `[ops][phase8] replay_pf=${Number.isFinite(k.replayProfitFactor) ? k.replayProfitFactor.toFixed(2) : "∞"} target>=${t.replayPfMin.toFixed(2)} ${c.replayPfOk ? "PASS" : "FAIL"}`
+  );
+  console.log(`[ops][phase8] OVERALL ${r.pass ? "PASS" : "FAIL"}`);
+}
+
 async function runSuggestedAction(
   rl: ReturnType<typeof createInterface>,
   date: string,
@@ -1332,6 +1384,10 @@ async function runSuggestedAction(
   }
   if (suggestion.action === "funnel-optimize") {
     await runFunnelOptimizeInteractive(rl, date);
+    return;
+  }
+  if (suggestion.action === "phase8-validate") {
+    await runPhase8ValidationInteractive(rl);
     return;
   }
   if (suggestion.action === "repair-missing-days") {
@@ -1415,6 +1471,10 @@ async function interactive(date: string): Promise<void> {
       }
       if (action === "funnel-optimize") {
         await runFunnelOptimizeInteractive(rl, currentDate);
+        continue;
+      }
+      if (action === "phase8-validate") {
+        await runPhase8ValidationInteractive(rl);
         continue;
       }
       if (action === "help") {

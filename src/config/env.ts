@@ -56,6 +56,18 @@ export const env = {
   funnelOptimizerDominancePct: num("FUNNEL_OPTIMIZER_DOMINANCE_PCT", 0.35),
   /** Funnel optimizer: max env tuning applies allowed per IST week */
   funnelOptimizerMaxChangesPerWeek: num("FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK", 1),
+  /** Phase 8 validation: lookback days for KPI report */
+  phase8ValidationLookbackDays: num("PHASE8_VALIDATION_LOOKBACK_DAYS", 5),
+  /** Phase 8 target: execution rate minimum (executed/total decisions) */
+  phase8TargetExecRateMin: num("PHASE8_TARGET_EXEC_RATE_MIN", 0.02),
+  /** Phase 8 target: execution rate upper guidance */
+  phase8TargetExecRateMax: num("PHASE8_TARGET_EXEC_RATE_MAX", 0.05),
+  /** Phase 8 target: maximum losing-day ratio */
+  phase8TargetLosingDayPctMax: num("PHASE8_TARGET_LOSING_DAY_PCT_MAX", 0.30),
+  /** Phase 8 target: replay profit factor floor */
+  phase8TargetReplayPfMin: num("PHASE8_TARGET_REPLAY_PF_MIN", 1.2),
+  /** Phase 8 guardrail: max allowed worst daily loss (absolute INR) */
+  phase8TargetMaxDailyLoss: num("PHASE8_TARGET_MAX_DAILY_LOSS", 15_000),
   /** Cheaper model for `bun run backtest` (OpenRouter slug, e.g. Gemini Flash) */
   judgeModelBacktest:
     process.env.JUDGE_MODEL_BACKTEST ?? "google/gemini-2.0-flash-001",

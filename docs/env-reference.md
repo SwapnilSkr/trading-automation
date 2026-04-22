@@ -76,6 +76,12 @@ If no API key: falls back to a deterministic FNV hash-seeded vector (no real emb
 | `FUNNEL_OPTIMIZER_MIN_DECISIONS` | `120` | Minimum decisions required before optimizer proposes tuning |
 | `FUNNEL_OPTIMIZER_DOMINANCE_PCT` | `0.35` | Dominant blocker share threshold (non-executed subset) |
 | `FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK` | `1` | Weekly safety cap for applied `.env` tuning changes |
+| `PHASE8_VALIDATION_LOOKBACK_DAYS` | `5` | Default lookback for `phase8-validate` KPI checks |
+| `PHASE8_TARGET_EXEC_RATE_MIN` | `0.02` | Target floor for execution rate |
+| `PHASE8_TARGET_EXEC_RATE_MAX` | `0.05` | Target ceiling guidance for execution rate |
+| `PHASE8_TARGET_LOSING_DAY_PCT_MAX` | `0.30` | Maximum losing-day ratio target |
+| `PHASE8_TARGET_REPLAY_PF_MIN` | `1.2` | Minimum replay profit factor target |
+| `PHASE8_TARGET_MAX_DAILY_LOSS` | `15000` | Max allowed worst daily loss (INR) in validation window |
 | `JUDGE_COOLDOWN_MS` | `300000` (5 min) | Min time between judge calls **per strategy per ticker** in live mode |
 | `ADAPTIVE_JUDGE_COOLDOWN_ENABLED` | `true` | If `true`, cooldown is scaled by candidate quality score instead of fixed `JUDGE_COOLDOWN_MS` |
 | `ADAPTIVE_JUDGE_COOLDOWN_MIN_MS` | `60000` (1 min) | Lower bound for adaptive cooldown (best candidates) |
