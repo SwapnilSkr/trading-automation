@@ -1351,3 +1351,190 @@ export function evaluateEngulfingWithVolume(
 
   return undefined;
 }
+
+/**
+ * Donchian 20-bar breakout with trend + participation checks.
+ * Uses the previous 20 completed bars (no lookahead) and requires:
+ * - close beyond Donchian band
+ * - EMA20 trend alignment
+ * - positive volume participation
+ */
+export function evaluateDonchian20Breakout(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
+  if (sessionCandles.length < 25) return undefined;
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const prev = sessionCandles[sessionCandles.length - 2]!;
+  const hist = sessionCandles.slice(-21, -1);
+  if (hist.length < 20) return undefined;
+
+  const bandHigh = Math.max(...hist.map((c) => c.h));
+  const bandLow = Math.min(...hist.map((c) => c.l));
+  const e20 = ema(sessionCandles, 20);
+  if (e20 === undefined) return undefined;
+  const vz = volumeZScore(sessionCandles, 20) ?? 0;
+  if (vz < 0.6) return undefined;
+  const rsiVal = rsi(14, sessionCandles);
+  if (rsiVal === undefined) return undefined;
+
+  if (
+    last.c > bandHigh &&
+    prev.c <= bandHigh * 1.001 &&
+    last.c > e20 &&
+    rsiVal < 78
+  ) {
+    return {
+      strategy: "DONCHIAN_20_BREAKOUT",
+      side: "BUY",
+      snapshot: {
+        donchian_high_20: bandHigh,
+        donchian_low_20: bandLow,
+        ema20: e20,
+        volume_z: vz,
+        rsi: rsiVal,
+      },
+      hint: `Donchian20 BUY breakout: close > 20-bar high with trend + volume`,
+    };
+  }
+
+  if (
+    last.c < bandLow &&
+    prev.c >= bandLow * 0.999 &&
+    last.c < e20 &&
+    rsiVal > 22
+  ) {
+    return {
+      strategy: "DONCHIAN_20_BREAKOUT",
+      side: "SELL",
+      snapshot: {
+        donchian_high_20: bandHigh,
+        donchian_low_20: bandLow,
+        ema20: e20,
+        volume_z: vz,
+        rsi: rsiVal,
+      },
+      hint: `Donchian20 SELL breakdown: close < 20-bar low with trend + volume`,
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Three-bar pullback continuation.
+ * In a clear EMA20/EMA50 trend, waits for a controlled 3-bar pullback then
+ * demands a trigger bar that breaks the pullback structure.
+ */
+export function evaluateThreeBarPullbackContinuation(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
+  if (sessionCandles.length < 60) return undefined;
+
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const p1 = sessionCandles[sessionCandles.length - 2]!;
+  const p2 = sessionCandles[sessionCandles.length - 3]!;
+  const p3 = sessionCandles[sessionCandles.length - 4]!;
+
+  const e20 = ema(sessionCandles, 20);
+  const e50 = ema(sessionCandles, 50);
+  if (e20 === undefined || e50 === undefined) return undefined;
+
+  const vz = volumeZScore(sessionCandles, 20) ?? 0;
+  const trendGapPct = Math.abs(e20 - e50) / last.c;
+  if (trendGapPct < 0.001) return undefined;
+
+  const upTrend = e20 > e50 && last.c > e20;
+  const downTrend = e20 < e50 && last.c < e20;
+
+  const longPullbackShape = p3.c > p2.c && p2.c > p1.c && p1.l > e50 * 0.997;
+  if (upTrend && longPullbackShape && last.c > p1.h && vz > -0.2) {
+    return {
+      strategy: "THREE_BAR_PULLBACK_CONTINUATION",
+      side: "BUY",
+      snapshot: {
+        ema20: e20,
+        ema50: e50,
+        trend_gap_pct: trendGapPct * 100,
+        trigger_level: p1.h,
+        volume_z: vz,
+      },
+      hint: "3-bar pullback BUY: trend intact and trigger bar broke pullback high",
+    };
+  }
+
+  const shortPullbackShape = p3.c < p2.c && p2.c < p1.c && p1.h < e50 * 1.003;
+  if (downTrend && shortPullbackShape && last.c < p1.l && vz > -0.2) {
+    return {
+      strategy: "THREE_BAR_PULLBACK_CONTINUATION",
+      side: "SELL",
+      snapshot: {
+        ema20: e20,
+        ema50: e50,
+        trend_gap_pct: trendGapPct * 100,
+        trigger_level: p1.l,
+        volume_z: vz,
+      },
+      hint: "3-bar pullback SELL: trend intact and trigger bar broke pullback low",
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * NR7 expansion breakout.
+ * If the previous candle has the narrowest range among the last 7 candles,
+ * enter on expansion break with trend and volume confirmation.
+ */
+export function evaluateNr7ExpansionBreakout(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
+  if (sessionCandles.length < 28) return undefined;
+
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const setup = sessionCandles[sessionCandles.length - 2]!;
+  const prev6 = sessionCandles.slice(-8, -2);
+  if (prev6.length < 6) return undefined;
+
+  const setupRange = setup.h - setup.l;
+  if (setupRange <= 0) return undefined;
+  const smallestPrevRange = Math.min(...prev6.map((c) => c.h - c.l));
+  if (setupRange > smallestPrevRange) return undefined;
+
+  const e20 = ema(sessionCandles, 20);
+  if (e20 === undefined) return undefined;
+  const vz = volumeZScore(sessionCandles, 20) ?? 0;
+  if (vz < 0.7) return undefined;
+
+  if (last.c > setup.h && last.c > e20) {
+    return {
+      strategy: "NR7_EXPANSION_BREAKOUT",
+      side: "BUY",
+      snapshot: {
+        nr7_high: setup.h,
+        nr7_low: setup.l,
+        nr7_range: setupRange,
+        volume_z: vz,
+        ema20: e20,
+      },
+      hint: "NR7 BUY expansion: narrow setup bar broke upward with participation",
+    };
+  }
+
+  if (last.c < setup.l && last.c < e20) {
+    return {
+      strategy: "NR7_EXPANSION_BREAKOUT",
+      side: "SELL",
+      snapshot: {
+        nr7_high: setup.h,
+        nr7_low: setup.l,
+        nr7_range: setupRange,
+        volume_z: vz,
+        ema20: e20,
+      },
+      hint: "NR7 SELL expansion: narrow setup bar broke downward with participation",
+    };
+  }
+
+  return undefined;
+}

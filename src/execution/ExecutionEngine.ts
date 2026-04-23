@@ -40,6 +40,9 @@ import {
   evaluateFiveMinOrbBreak,
   evaluateSessionHighLowBreak,
   evaluateEngulfingWithVolume,
+  evaluateDonchian20Breakout,
+  evaluateThreeBarPullbackContinuation,
+  evaluateNr7ExpansionBreakout,
   evaluateOrbRetest15m,
   evaluatePrevDayBreakRetest,
   evaluateVolatilityContractionBreakout,
@@ -821,6 +824,18 @@ export class ExecutionEngine {
       const ewv = evaluateEngulfingWithVolume(sessionCandles);
       if (ewv) triggers.push(ewv);
     }
+    if (env.backtestEnableDonchian20Breakout) {
+      const d20 = evaluateDonchian20Breakout(sessionCandles);
+      if (d20) triggers.push(d20);
+    }
+    if (env.backtestEnableThreeBarPullbackContinuation) {
+      const pb3 = evaluateThreeBarPullbackContinuation(sessionCandles);
+      if (pb3) triggers.push(pb3);
+    }
+    if (env.backtestEnableNr7ExpansionBreakout) {
+      const nr7 = evaluateNr7ExpansionBreakout(sessionCandles);
+      if (nr7) triggers.push(nr7);
+    }
 
     if (
       env.backtestEnableIndexLaggardCatchup &&
@@ -1576,6 +1591,9 @@ function rankTriggers(
     INDEX_LAGGARD_CATCHUP: 0.7,
     OPEN_DRIVE_PULLBACK: 0.72,
     VWAP_PULLBACK_TREND: 0.68,
+    DONCHIAN_20_BREAKOUT: 0.67,
+    THREE_BAR_PULLBACK_CONTINUATION: 0.69,
+    NR7_EXPANSION_BREAKOUT: 0.66,
     EMA20_BREAK_RETEST: 0.64,
     ORB_FAKEOUT_REVERSAL: 0.62,
     ORB_15M: 0.6,
@@ -1634,7 +1652,10 @@ function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
     strategy === "VWAP_REVERSAL_CONFIRMATION" ||
     strategy === "FIVE_MIN_ORB_BREAK" ||
     strategy === "SESSION_HIGH_LOW_BREAK" ||
-    strategy === "ENGULFING_WITH_VOLUME"
+    strategy === "ENGULFING_WITH_VOLUME" ||
+    strategy === "DONCHIAN_20_BREAKOUT" ||
+    strategy === "THREE_BAR_PULLBACK_CONTINUATION" ||
+    strategy === "NR7_EXPANSION_BREAKOUT"
   ) {
     // Signal conditions are self-filtering across all vol regimes:
     // - CANDLE_MOMENTUM_SURGE: big bar + volume surge requirement works/scales in any regime
@@ -1643,6 +1664,9 @@ function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
     // - FIVE_MIN_ORB_BREAK: opening 5m range is always defined; vz > 0.5 filters low-activity setups
     // - SESSION_HIGH_LOW_BREAK: uses session's own extremes + vz > 1.0 — self-regulates
     // - ENGULFING_WITH_VOLUME: body-size + vz > 0.8 acts as natural high-vol filter
+    // - DONCHIAN_20_BREAKOUT: 20-bar range expansion with volume + EMA alignment
+    // - THREE_BAR_PULLBACK_CONTINUATION: requires directional trend + structured pullback
+    // - NR7_EXPANSION_BREAKOUT: requires compression (NR7) before expansion break
     return true;
   }
   if (strategy === "MEAN_REV_Z" || strategy === "ORB_FAKEOUT_REVERSAL") {

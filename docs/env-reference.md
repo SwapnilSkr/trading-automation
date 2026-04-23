@@ -297,7 +297,7 @@ Calibration note:
 
 ### Strategy Toggles
 
-All 14 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_AUTO_GATE_ENABLED`) dynamically disables underperformers based on rolling live performance — no need to manually cherry-pick strategies. Disable manually here only if you want to run controlled ablation tests.
+All 25 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_AUTO_GATE_ENABLED`) dynamically disables underperformers based on rolling live performance — no need to manually cherry-pick strategies. Disable manually here only if you want to run controlled ablation tests.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
@@ -315,6 +315,17 @@ All 14 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_
 | `BACKTEST_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST` | `true` | Inside-bar breakout with retest |
 | `BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK` | `true` | Strong open drive pullback entry |
 | `BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL` | `true` | ORB fakeout reversal |
+| `BACKTEST_ENABLE_EMA_RIBBON_TREND` | `true` | EMA9/EMA21 ribbon trend pullback |
+| `BACKTEST_ENABLE_CANDLE_MOMENTUM_SURGE` | `true` | Large momentum candle + participation |
+| `BACKTEST_ENABLE_TREND_FLAG_BREAKOUT` | `true` | Pole + tight flag breakout |
+| `BACKTEST_ENABLE_VWAP_REVERSAL_CONFIRMATION` | `true` | Confirmed VWAP reversal after extension |
+| `BACKTEST_ENABLE_FIVE_MIN_ORB_BREAK` | `true` | 5-minute ORB breakout |
+| `BACKTEST_ENABLE_SESSION_HIGH_LOW_BREAK` | `true` | Session extreme breakout |
+| `BACKTEST_ENABLE_ENGULFING_WITH_VOLUME` | `true` | Engulfing body + volume confirmation |
+| `BACKTEST_ENABLE_DONCHIAN_20_BREAKOUT` | `true` | 20-bar Donchian breakout with trend filter |
+| `BACKTEST_ENABLE_THREE_BAR_PULLBACK_CONTINUATION` | `true` | 3-bar pullback continuation |
+| `BACKTEST_ENABLE_NR7_EXPANSION_BREAKOUT` | `true` | NR7 compression expansion break |
+| `BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP` | `true` | Nifty-heavyweight laggard catch-up |
 
 ---
 
@@ -326,7 +337,7 @@ Automatically disables strategies whose recent performance falls below threshold
 |----------|---------|-------|
 | `STRATEGY_AUTO_GATE_ENABLED` | `true` | Enable automatic strategy disabling |
 | `STRATEGY_GATE_WINDOW` | `20` | Rolling trade window for evaluation |
-| `STRATEGY_GATE_MIN_TRADES` | `40` | Minimum closed trades before strategy can be disabled |
+| `STRATEGY_GATE_MIN_TRADES` | `12` | Minimum closed trades before strategy can be disabled |
 | `STRATEGY_GATE_MIN_PF` | `0.8` | Disable strategy if profit factor < 0.8 |
 | `STRATEGY_GATE_MIN_WIN_RATE` | `0.3` | Disable strategy if win rate < 30% |
 | `STRATEGY_GATE_DECAY_ENABLED` | `true` | Use decay-weighted PF/WR for disable decision |

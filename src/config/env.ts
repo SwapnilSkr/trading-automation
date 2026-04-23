@@ -499,6 +499,18 @@ export const env = {
   backtestEnableSessionHighLowBreak: bool("BACKTEST_ENABLE_SESSION_HIGH_LOW_BREAK", true),
   /** Engulfing candle with volume confirmation — price action signal, all regimes */
   backtestEnableEngulfingWithVolume: bool("BACKTEST_ENABLE_ENGULFING_WITH_VOLUME", true),
+  /** Donchian 20-bar breakout with trend + volume filters — all regimes */
+  backtestEnableDonchian20Breakout: bool("BACKTEST_ENABLE_DONCHIAN_20_BREAKOUT", true),
+  /** Trend continuation after controlled 3-bar pullback — all regimes */
+  backtestEnableThreeBarPullbackContinuation: bool(
+    "BACKTEST_ENABLE_THREE_BAR_PULLBACK_CONTINUATION",
+    true,
+  ),
+  /** NR7 setup bar expansion breakout with confirmation — all regimes */
+  backtestEnableNr7ExpansionBreakout: bool(
+    "BACKTEST_ENABLE_NR7_EXPANSION_BREAKOUT",
+    true,
+  ),
   /** Nifty-50 overweight catch-up (heavyweights only) — needs NIFTY50 + 1m history in Mongo */
   backtestEnableIndexLaggardCatchup: bool(
     "BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP",

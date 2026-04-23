@@ -399,11 +399,22 @@ BACKTEST_ENABLE_VOLATILITY_CONTRACTION_BREAKOUT=true
 BACKTEST_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST=true
 BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK=true
 BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL=true
+BACKTEST_ENABLE_EMA_RIBBON_TREND=true
+BACKTEST_ENABLE_CANDLE_MOMENTUM_SURGE=true
+BACKTEST_ENABLE_TREND_FLAG_BREAKOUT=true
+BACKTEST_ENABLE_VWAP_REVERSAL_CONFIRMATION=true
+BACKTEST_ENABLE_FIVE_MIN_ORB_BREAK=true
+BACKTEST_ENABLE_SESSION_HIGH_LOW_BREAK=true
+BACKTEST_ENABLE_ENGULFING_WITH_VOLUME=true
+BACKTEST_ENABLE_DONCHIAN_20_BREAKOUT=true
+BACKTEST_ENABLE_THREE_BAR_PULLBACK_CONTINUATION=true
+BACKTEST_ENABLE_NR7_EXPANSION_BREAKOUT=true
+BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP=true
 
 # Strategy auto-gate (rolling performance filter)
 STRATEGY_AUTO_GATE_ENABLED=true
 STRATEGY_GATE_WINDOW=20       # evaluate over last 20 trades
-STRATEGY_GATE_MIN_TRADES=40   # don't disable until enough closed-trade sample
+STRATEGY_GATE_MIN_TRADES=12   # don't disable until enough closed-trade sample
 STRATEGY_GATE_MIN_PF=0.8      # disable if profit factor < 0.8
 STRATEGY_GATE_MIN_WIN_RATE=0.3 # disable if win rate < 30%
 STRATEGY_GATE_DECAY_ENABLED=true
@@ -506,7 +517,7 @@ See `docs/architecture.md` for the full system diagram and data flow.
 
 - **Broker** — `src/broker/angelOneBroker.ts`: SmartAPI REST (auth, 1m/daily candles, quotes, orders, positions). Falls back to stub if credentials incomplete.
 - **Indicators** — `src/indicators/`: VWAP, RSI(14), Z-score vs VWAP, volume Z-score, RSI divergence, opening range, prior-day high/low, **ATR(14)**.
-- **Strategies** — `src/strategies/triggers.ts`: 14 strategies — ORB_15M, ORB_RETEST_15M, MEAN_REV_Z, BIG_BOY_SWEEP, VWAP_RECLAIM_REJECT, VWAP_PULLBACK_TREND, PREV_DAY_HIGH_LOW_BREAK_RETEST, EMA20_BREAK_RETEST, VWAP_RECLAIM_CONTINUATION, INITIAL_BALANCE_BREAK_RETEST, VOLATILITY_CONTRACTION_BREAKOUT, INSIDE_BAR_BREAKOUT_WITH_RETEST, OPEN_DRIVE_PULLBACK, ORB_FAKEOUT_REVERSAL.
+- **Strategies** — `src/strategies/triggers.ts`: 25 strategies including ORB/VWAP/retest core plus EMA_RIBBON_TREND, CANDLE_MOMENTUM_SURGE, TREND_FLAG_BREAKOUT, VWAP_REVERSAL_CONFIRMATION, FIVE_MIN_ORB_BREAK, SESSION_HIGH_LOW_BREAK, ENGULFING_WITH_VOLUME, DONCHIAN_20_BREAKOUT, THREE_BAR_PULLBACK_CONTINUATION, NR7_EXPANSION_BREAKOUT, and INDEX_LAGGARD_CATCHUP.
 - **Strategy auto-gate** — `src/execution/strategyTracker.ts`: rolling 20-trade PF/WR gate; auto-disables underperforming strategies.
 - **Execution** — `src/execution/ExecutionEngine.ts`: signal → vol/strategy gates → hard risk/market/time gates → optional layer-1 shadow eval → Pinecone consensus → enriched judge → ATR-based sizing → paper order → live exit tracking.
 - **Risk gates** — `src/risk/`: portfolio exposure, sector/side/correlation caps, NIFTY/breadth gates, strategy time windows.

@@ -54,7 +54,7 @@ If you only need operating steps, use `docs/instructions.md`.
 │         ├─ checkLiveExits() → ATR-based stop/target/trail          │
 │         ├─ fetchOhlcRange() → Mongo 1m candles (no broker call!)   │
 │         └─ runScanningPass():                                       │
-│               ├─ evaluate 14 strategies → TriggerHit[]             │
+│               ├─ evaluate 25 strategies → TriggerHit[]             │
 │               │                                                     │
 │               ├─ [GATE 1] Vol-regime filter                         │
 │               │   classifyVolRegime() → LOW/MID/HIGH               │
@@ -177,7 +177,7 @@ src/
 │   └── safety.ts                # Daily stop-loss, kill switch
 │
 ├── strategies/
-│   └── triggers.ts              # 14 strategies: ORB_15M, MEAN_REV_Z, BIG_BOY_SWEEP,
+│   └── triggers.ts              # 25 strategies (ORB/VWAP/retest core + newer momentum/continuation set)
 │                                #   VWAP_RECLAIM_REJECT, VWAP_PULLBACK_TREND,
 │                                #   ORB_RETEST_15M, PREV_DAY_HIGH_LOW_BREAK_RETEST,
 │                                #   EMA20_BREAK_RETEST, VWAP_RECLAIM_CONTINUATION,
@@ -257,7 +257,7 @@ src/
 
 ## Strategies
 
-All 14 strategies are enabled by default. The strategy auto-gate (`strategyTracker.ts`) dynamically disables underperformers based on rolling live performance.
+All 25 strategies are enabled by default. The strategy auto-gate (`strategyTracker.ts`) dynamically disables underperformers based on rolling live performance.
 
 ### ORB_15M — Opening Range Breakout
 - Computes the high/low of the first 15 minutes of session (09:15–09:30)
@@ -467,7 +467,7 @@ Pinecone auto-approval now requires consensus: at least 3 same-strategy neighbor
 
 ## Strategy Auto-Gate (Decay-Weighted + Re-enable)
 
-`src/execution/strategyTracker.ts` maintains rolling performance stats for all 14 strategies:
+`src/execution/strategyTracker.ts` maintains rolling performance stats for all 25 strategies:
 
 - Queries last `STRATEGY_GATE_WINDOW` (default 20) executed trades from Mongo per strategy
 - Computes raw + decay-weighted win rate/profit factor and total PnL

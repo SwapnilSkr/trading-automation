@@ -81,6 +81,15 @@ Layman note:
 - Mild crowding is now usually throttled (smaller quantity) instead of instantly vetoed.
 - Session policy is time-aware: strict near open, normal midday, cautious late session.
 - Strategy gate is now adaptive: weak strategies can be auto-disabled, then auto-reenabled only after cooldown + improved recent performance.
+- Strategy pool now includes additional non-vol-gated setups (Donchian breakout, 3-bar pullback continuation, NR7 expansion), so the engine has more valid candidates in all regimes without removing core risk checks.
+
+Quick enable/disable toggles for those 3:
+
+```bash
+BACKTEST_ENABLE_DONCHIAN_20_BREAKOUT=true
+BACKTEST_ENABLE_THREE_BAR_PULLBACK_CONTINUATION=true
+BACKTEST_ENABLE_NR7_EXPANSION_BREAKOUT=true
+```
 
 Quick non-interactive checks:
 
