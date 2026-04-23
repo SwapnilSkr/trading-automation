@@ -32,6 +32,7 @@ import {
   evaluateOpenDrivePullback,
   evaluateOrb,
   evaluateOrbFakeoutReversal,
+  evaluateIndexLaggardCatchup,
   evaluateOrbRetest15m,
   evaluatePrevDayBreakRetest,
   evaluateVolatilityContractionBreakout,
@@ -40,6 +41,8 @@ import {
   evaluateVwapReclaimReject,
   type TriggerHit,
 } from "../strategies/triggers.js";
+import { pct5dFromIntradayHistory } from "../market/relativeStrength.js";
+import { isNifty50Heavyweight } from "../market/niftyHeavyweights.js";
 import { priorDayHighLow } from "../indicators/bigBoy.js";
 import {
   createSafetyState,
@@ -615,6 +618,10 @@ export class ExecutionEngine {
       return;
     }
 
+    const sim = backtest?.simulatedAt
+      ? DateTime.fromJSDate(backtest.simulatedAt, { zone: IST })
+      : nowIST();
+
     const triggers: TriggerHit[] = [];
     if (env.backtestEnableOrb15m) {
       const orb = evaluateOrb(sessionCandles);
@@ -665,9 +672,33 @@ export class ExecutionEngine {
       if (ofr) triggers.push(ofr);
     }
 
-    const sim = backtest?.simulatedAt
-      ? DateTime.fromJSDate(backtest.simulatedAt, { zone: IST })
-      : nowIST();
+    if (
+      env.backtestEnableIndexLaggardCatchup &&
+      isNifty50Heavyweight(ticker, { isBacktest: Boolean(backtest) })
+    ) {
+      const at = backtest?.simulatedAt ?? new Date();
+      const dayStart = sim.startOf("day").toJSDate();
+      const histFrom = sim.minus({ days: 22 }).startOf("day").toJSDate();
+      const [idxSession, idxHist, tkHist] = await Promise.all([
+        fetchOhlcRange(env.niftySymbol, dayStart, at),
+        fetchOhlcRange(env.niftySymbol, histFrom, at),
+        fetchOhlcRange(ticker, histFrom, at),
+      ]);
+      const i5 = pct5dFromIntradayHistory(idxHist);
+      const t5 = pct5dFromIntradayHistory(tkHist);
+      if (i5 !== undefined && t5 !== undefined) {
+        const catchup = evaluateIndexLaggardCatchup(
+          ticker,
+          sessionCandles,
+          idxSession,
+          i5,
+          t5,
+          Boolean(backtest)
+        );
+        if (catchup) triggers.push(catchup);
+      }
+    }
+
     const priorDayStart = sim.startOf("day").minus({ days: 1 });
     const priorFrom = priorDayStart.startOf("day").toJSDate();
     const priorTo = priorDayStart.endOf("day").toJSDate();
@@ -751,12 +782,18 @@ export class ExecutionEngine {
     }
 
     for (const ranked of shortlisted) {
-      await this.maybeExecute(ticker, ranked.hit, {
-        niftyTrendHint,
-        newsHeadlines,
-        sessionCandles,
-        marketSnapshot: marketSnapshot ?? backtest?.marketSnapshot,
-      }, backtest, ranked.score);
+      await this.maybeExecute(
+        ticker,
+        ranked.hit,
+        {
+          niftyTrendHint,
+          newsHeadlines,
+          sessionCandles,
+          marketSnapshot: marketSnapshot ?? backtest?.marketSnapshot,
+        },
+        backtest,
+        ranked.score
+      );
     }
   }
 
@@ -1002,12 +1039,18 @@ export class ExecutionEngine {
           .join("; ");
       }
 
+      const indexLaggardContext =
+        hit.strategy === "INDEX_LAGGARD_CATCHUP"
+          ? `5d NIFTY ${Number(hit.snapshot.index_pct5d).toFixed(2)}% vs laggard ${Number(hit.snapshot.ticker_pct5d).toFixed(2)}%; Nifty today ${Number(hit.snapshot.nifty_from_open_pct).toFixed(2)}% from open; trigger_mode=${hit.snapshot.trigger_mode}`
+          : undefined;
+
       const judgeInput: JudgeInput = {
         strategy: hit.strategy,
         ticker,
         side: hit.side,
         triggerHint: hit.hint,
         niftyContext: ctx.niftyTrendHint,
+        indexLaggardContext,
         newsHeadlines: ctx.newsHeadlines,
         similarPatternsSummary: patternSummary,
         priceContext,
@@ -1379,6 +1422,7 @@ function rankTriggers(
   candles: Ohlc1m[]
 ): RankedTrigger[] {
   const baseByStrategy: Partial<Record<StrategyId, number>> = {
+    INDEX_LAGGARD_CATCHUP: 0.7,
     OPEN_DRIVE_PULLBACK: 0.72,
     VWAP_PULLBACK_TREND: 0.68,
     EMA20_BREAK_RETEST: 0.64,
@@ -1416,7 +1460,8 @@ function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
     strategy === "VOLATILITY_CONTRACTION_BREAKOUT" ||
     strategy === "INSIDE_BAR_BREAKOUT_WITH_RETEST" ||
     strategy === "EMA20_BREAK_RETEST" ||
-    strategy === "PREV_DAY_HIGH_LOW_BREAK_RETEST"
+    strategy === "PREV_DAY_HIGH_LOW_BREAK_RETEST" ||
+    strategy === "INDEX_LAGGARD_CATCHUP"
   ) {
     return regime === "LOW"
       ? env.volRegimeOrbLow

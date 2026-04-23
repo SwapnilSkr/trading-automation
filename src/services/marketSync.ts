@@ -2,6 +2,7 @@ import type { BrokerClient } from "../broker/types.js";
 import { env } from "../config/env.js";
 import { upsertOhlcBatch } from "../db/repositories.js";
 import { nowIST } from "../time/ist.js";
+import { getNifty50HeavyweightSupplementalTickers } from "../market/niftyHeavyweights.js";
 import { resolveWatchlistTickers } from "./watchlist.js";
 
 function sleep(ms: number): Promise<void> {
@@ -12,7 +13,15 @@ function sleep(ms: number): Promise<void> {
 export async function syncIntradayHistory(broker: BrokerClient): Promise<void> {
   const end = nowIST().endOf("day").toJSDate();
   const start = nowIST().minus({ hours: 6 }).toJSDate();
-  const tickers = await resolveWatchlistTickers();
+  const watch = await resolveWatchlistTickers();
+  const hw =
+    env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+      ? await getNifty50HeavyweightSupplementalTickers(broker)
+      : [];
+  const tickers =
+    env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+      ? [...new Set([...watch, env.niftySymbol, ...hw])]
+      : watch;
   await syncOhlcForRange(broker, start, end, tickers);
 }
 

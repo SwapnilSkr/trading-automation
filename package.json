@@ -28,6 +28,7 @@
     "phase8-validate": "bun run src/cli/phase8-validate.ts --",
     "monte-carlo-report": "bun run src/cli/monte-carlo-report.ts --",
     "walk-forward-backtest": "bun run src/cli/walk-forward-backtest.ts --",
+    "resolve-heavyweights": "bun run src/cli/resolve-heavyweights.ts",
     "migrate-live-trades": "bun run src/cli/migrate-live-trades.ts --",
     "reconcile-live-exits": "bun run src/cli/reconcile-live-exits.ts --"
   },

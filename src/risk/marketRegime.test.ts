@@ -4,6 +4,7 @@ import { evaluateMarketRegime, isLongBreakoutStrategy } from "./marketRegime.js"
 describe("market regime gate", () => {
   test("identifies long breakout strategies", () => {
     expect(isLongBreakoutStrategy("ORB_15M")).toBe(true);
+    expect(isLongBreakoutStrategy("INDEX_LAGGARD_CATCHUP")).toBe(true);
     expect(isLongBreakoutStrategy("MEAN_REV_Z")).toBe(false);
   });
 

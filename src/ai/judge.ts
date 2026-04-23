@@ -16,6 +16,8 @@ export interface JudgeInput {
   strategyTrackRecord?: string;
   /** Yesterday's lessons from analyst post-mortem */
   yesterdaysLessons?: string;
+  /** INDEX_LAGGARD_CATCHUP: 5d index vs ticker divergence + intraday Nifty hold */
+  indexLaggardContext?: string;
 }
 
 export interface JudgeResult {
@@ -136,6 +138,10 @@ Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasonin
 
   if (input.niftyContext) {
     sections.push(`\n[MARKET CONTEXT]`, `Nifty: ${input.niftyContext}`);
+  }
+
+  if (input.indexLaggardContext) {
+    sections.push(`\n[INDEX LAGGARD]`, input.indexLaggardContext);
   }
 
   if (input.newsHeadlines?.length) {

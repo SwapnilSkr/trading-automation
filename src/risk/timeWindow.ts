@@ -25,7 +25,8 @@ function windowFor(strategy: StrategyId): { start: string; end: string; label: s
     strategy === "ORB_15M" ||
     strategy === "ORB_RETEST_15M" ||
     strategy === "INITIAL_BALANCE_BREAK_RETEST" ||
-    strategy === "ORB_FAKEOUT_REVERSAL"
+    strategy === "ORB_FAKEOUT_REVERSAL" ||
+    strategy === "INDEX_LAGGARD_CATCHUP"
   ) {
     return { start: env.orbEntryStart, end: env.orbEntryEnd, label: "ORB" };
   }

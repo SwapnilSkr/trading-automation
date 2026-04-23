@@ -36,6 +36,11 @@ import {
   nowIST,
 } from "../time/ist.js";
 import { currentRunMode } from "../scheduler/mode.js";
+import {
+  getCachedNifty50Heavyweights,
+  NIFTY50_HEAVYWEIGHT_TICKERS,
+  resolveNifty50HeavyweightsLive,
+} from "../market/niftyHeavyweights.js";
 import { runCli } from "./runCli.js";
 
 interface ParsedArgs {
@@ -122,6 +127,7 @@ type MainMenuAction =
   | "discovery"
   | "funnel-optimize"
   | "phase8-validate"
+  | "resolve-heavyweights"
   | "help"
   | "exit";
 
@@ -196,6 +202,17 @@ const MAIN_MENU: MenuEntry[] = [
     action: "phase8-validate",
     label: "Phase 8 validation (targets pass/fail)",
     aliases: ["phase8", "validate", "kpi"],
+  },
+  {
+    action: "resolve-heavyweights",
+    label: "Resolve Nifty-50 laggard heavyweights (NSE list + quotes)",
+    aliases: [
+      "heavyweights",
+      "hw",
+      "resolve-heavyweights",
+      "laggard-hw",
+      "laggard-weights",
+    ],
   },
   {
     action: "help",
@@ -710,7 +727,7 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `phase8`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `phase8`, `heavyweights`, `date`, `replay`, `range`, `help`.");
 }
 
 function printHelp(): void {
@@ -725,6 +742,7 @@ function printHelp(): void {
   console.log("  9            # replay custom range");
   console.log("  12           # funnel optimizer (analyze/tune)");
   console.log("  13           # phase8 validation (target checks)");
+  console.log("  14           # resolve Nifty-50 laggard heavyweights (dynamic) / show static list");
   console.log("  replay       # same as replay selected date");
   console.log("  range        # same as replay custom range");
   console.log("  repair       # same as repair missing days");
@@ -732,6 +750,7 @@ function printHelp(): void {
   console.log("  daemon       # same as daemon control");
   console.log("  funnel       # same as funnel optimizer");
   console.log("  phase8       # same as phase8 validation");
+  console.log("  heavyweights / hw  # NSE + Angel quotes (or static list if MODE=static)");
   console.log("  date         # same as change date");
   console.log("  sentinel     # same as option 2");
   console.log("  help");
@@ -1349,6 +1368,24 @@ async function runPhase8ValidationInteractive(
   console.log(`[ops][phase8] OVERALL ${r.pass ? "PASS" : "FAIL"}`);
 }
 
+async function runResolveHeavyweightsFromOps(): Promise<void> {
+  if (env.niftyHeavyweightsMode === "static") {
+    console.log(
+      `[ops] NIFTY_HEAVYWEIGHTS_MODE=static — baked-in: ${NIFTY50_HEAVYWEIGHT_TICKERS.join(", ")}`
+    );
+    console.log(
+      "[ops] Set NIFTY_HEAVYWEIGHTS_MODE=dynamic to resolve from NSE ind_nifty50list + Angel marketQuote."
+    );
+    return;
+  }
+  const broker = createBroker();
+  await broker.authenticate();
+  const tickers = await resolveNifty50HeavyweightsLive(broker);
+  const meta = getCachedNifty50Heavyweights();
+  console.log(`[ops] heavyweights source=${meta?.source ?? "n/a"} count=${tickers.length}`);
+  console.log(tickers.join(", "));
+}
+
 async function runSuggestedAction(
   rl: ReturnType<typeof createInterface>,
   date: string,
@@ -1475,6 +1512,10 @@ async function interactive(date: string): Promise<void> {
       }
       if (action === "phase8-validate") {
         await runPhase8ValidationInteractive(rl);
+        continue;
+      }
+      if (action === "resolve-heavyweights") {
+        await runResolveHeavyweightsFromOps();
         continue;
       }
       if (action === "help") {

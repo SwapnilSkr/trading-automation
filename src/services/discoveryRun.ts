@@ -14,6 +14,7 @@ import type {
 import { syncOhlcForRange } from "./marketSync.js";
 import { DateTime } from "luxon";
 import { IST, nextIndianWeekdayAfter, nowIST } from "../time/ist.js";
+import { getNifty50HeavyweightSupplementalTickers } from "../market/niftyHeavyweights.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -150,12 +151,19 @@ export async function runDiscoverySync(
       .minus({ days: opts.days })
       .startOf("day")
       .toJSDate();
-    ohlc = await syncOhlcForRange(
-      broker,
-      ohlcFrom,
-      end,
-      performers.map((p) => p.ticker)
-    );
+    const hw = env.discoverySyncIndexLaggardUniverse
+      ? await getNifty50HeavyweightSupplementalTickers(broker)
+      : [];
+    const tickersForOhlc = env.discoverySyncIndexLaggardUniverse
+      ? [
+          ...new Set([
+            ...performers.map((p) => p.ticker),
+            env.niftySymbol,
+            ...hw,
+          ]),
+        ]
+      : performers.map((p) => p.ticker);
+    ohlc = await syncOhlcForRange(broker, ohlcFrom, end, tickersForOhlc);
   }
 
   return {

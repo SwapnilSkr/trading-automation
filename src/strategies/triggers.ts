@@ -9,9 +9,14 @@ import {
   volumeZScore,
 } from "../indicators/core.js";
 import { detectOrbBreakoutUp } from "../indicators/orb.js";
-import { detectLiquidityGrab, type PriorDayRange } from "../indicators/bigBoy.js";
+import {
+  detectLiquidityGrab,
+  type PriorDayRange,
+} from "../indicators/bigBoy.js";
 import { IST } from "../time/ist.js";
 import { env } from "../config/env.js";
+import { isNifty50Heavyweight } from "../market/niftyHeavyweights.js";
+import { niftySessionSustainsBullish } from "../market/relativeStrength.js";
 
 export interface TriggerHit {
   strategy: StrategyId;
@@ -30,7 +35,7 @@ function minuteOfBar(c: Ohlc1m): number {
 function barsInMinuteWindow(
   candles: Ohlc1m[],
   fromMinInclusive: number,
-  toMinInclusive: number
+  toMinInclusive: number,
 ): Ohlc1m[] {
   return candles.filter((c) => {
     const m = minuteOfBar(c);
@@ -56,11 +61,19 @@ function ema(candles: Ohlc1m[], period: number): number | undefined {
   return value;
 }
 
-function hasBreakAbove(candles: Ohlc1m[], level: number, tol = 0.0005): boolean {
+function hasBreakAbove(
+  candles: Ohlc1m[],
+  level: number,
+  tol = 0.0005,
+): boolean {
   return candles.some((c) => c.h > level * (1 + tol));
 }
 
-function hasBreakBelow(candles: Ohlc1m[], level: number, tol = 0.0005): boolean {
+function hasBreakBelow(
+  candles: Ohlc1m[],
+  level: number,
+  tol = 0.0005,
+): boolean {
   return candles.some((c) => c.l < level * (1 - tol));
 }
 
@@ -68,7 +81,7 @@ function recentBreakAbove(
   candles: Ohlc1m[],
   level: number,
   maxBars: number,
-  tol = 0.0005
+  tol = 0.0005,
 ): boolean {
   return hasBreakAbove(candles.slice(-Math.max(1, maxBars)), level, tol);
 }
@@ -77,7 +90,7 @@ function recentBreakBelow(
   candles: Ohlc1m[],
   level: number,
   maxBars: number,
-  tol = 0.0005
+  tol = 0.0005,
 ): boolean {
   return hasBreakBelow(candles.slice(-Math.max(1, maxBars)), level, tol);
 }
@@ -99,7 +112,9 @@ export function evaluateOrb(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
   };
 }
 
-export function evaluateOrbRetest15m(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateOrbRetest15m(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 30) return undefined;
   const orbBars = barsInMinuteWindow(sessionCandles, OPEN_MIN, OPEN_MIN + 14);
   const orb = rangeOf(orbBars);
@@ -114,12 +129,12 @@ export function evaluateOrbRetest15m(sessionCandles: Ohlc1m[]): TriggerHit | und
   const brokeUp = recentBreakAbove(
     completedAfterOrb,
     orb.high,
-    env.retestMaxBarsAfterBreak
+    env.retestMaxBarsAfterBreak,
   );
   const brokeDown = recentBreakBelow(
     completedAfterOrb,
     orb.low,
-    env.retestMaxBarsAfterBreak
+    env.retestMaxBarsAfterBreak,
   );
 
   const longRetest =
@@ -165,13 +180,16 @@ export function evaluateOrbRetest15m(sessionCandles: Ohlc1m[]): TriggerHit | und
   return undefined;
 }
 
-export function evaluateMeanReversion(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateMeanReversion(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   const z = zScoreVsVwap(sessionCandles, 20);
   const r = rsi(14, sessionCandles);
   const vz = volumeZScore(sessionCandles, 20);
   if (z === undefined || r === undefined) return undefined;
 
-  const overextended = z > 2.5 && (rsiBearishDivergence(sessionCandles) || r > 70);
+  const overextended =
+    z > 2.5 && (rsiBearishDivergence(sessionCandles) || r > 70);
   const oversold = z < -2.5 && (rsiBullishDivergence(sessionCandles) || r < 30);
 
   if (!overextended && !oversold) return undefined;
@@ -191,7 +209,10 @@ export function evaluateMeanReversion(sessionCandles: Ohlc1m[]): TriggerHit | un
   };
 }
 
-export function evaluateBigBoy(last5mBar: Ohlc1m, pd: PriorDayRange): TriggerHit | undefined {
+export function evaluateBigBoy(
+  last5mBar: Ohlc1m,
+  pd: PriorDayRange,
+): TriggerHit | undefined {
   const sweep = detectLiquidityGrab(last5mBar, pd);
   if (!sweep) return undefined;
   return {
@@ -209,7 +230,9 @@ export function evaluateBigBoy(last5mBar: Ohlc1m, pd: PriorDayRange): TriggerHit
   };
 }
 
-export function evaluateVwapReclaimReject(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateVwapReclaimReject(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 25) return undefined;
 
   const last = sessionCandles[sessionCandles.length - 1]!;
@@ -246,7 +269,9 @@ export function evaluateVwapReclaimReject(sessionCandles: Ohlc1m[]): TriggerHit 
   };
 }
 
-export function evaluateVwapPullbackTrend(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateVwapPullbackTrend(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 55) return undefined;
 
   const last = sessionCandles[sessionCandles.length - 1]!;
@@ -294,7 +319,7 @@ export function evaluateVwapPullbackTrend(sessionCandles: Ohlc1m[]): TriggerHit 
 
 export function evaluatePrevDayBreakRetest(
   sessionCandles: Ohlc1m[],
-  pd: PriorDayRange
+  pd: PriorDayRange,
 ): TriggerHit | undefined {
   if (sessionCandles.length < 40) return undefined;
 
@@ -306,14 +331,20 @@ export function evaluatePrevDayBreakRetest(
     completed,
     pd.pdh,
     env.retestMaxBarsAfterBreak,
-    0.0008
+    0.0008,
   );
-  const longRetest = brokePdh && last.l <= pd.pdh * 1.001 && last.c > pd.pdh && last.c > prev.c;
+  const longRetest =
+    brokePdh && last.l <= pd.pdh * 1.001 && last.c > pd.pdh && last.c > prev.c;
   if (longRetest) {
     return {
       strategy: "PREV_DAY_HIGH_LOW_BREAK_RETEST",
       side: "BUY",
-      snapshot: { pdh: pd.pdh, pdl: pd.pdl, retest_level: pd.pdh, last_close: last.c },
+      snapshot: {
+        pdh: pd.pdh,
+        pdl: pd.pdl,
+        retest_level: pd.pdh,
+        last_close: last.c,
+      },
       hint: "Prior-day high break and retest hold",
     };
   }
@@ -322,14 +353,20 @@ export function evaluatePrevDayBreakRetest(
     completed,
     pd.pdl,
     env.retestMaxBarsAfterBreak,
-    0.0008
+    0.0008,
   );
-  const shortRetest = brokePdl && last.h >= pd.pdl * 0.999 && last.c < pd.pdl && last.c < prev.c;
+  const shortRetest =
+    brokePdl && last.h >= pd.pdl * 0.999 && last.c < pd.pdl && last.c < prev.c;
   if (shortRetest) {
     return {
       strategy: "PREV_DAY_HIGH_LOW_BREAK_RETEST",
       side: "SELL",
-      snapshot: { pdh: pd.pdh, pdl: pd.pdl, retest_level: pd.pdl, last_close: last.c },
+      snapshot: {
+        pdh: pd.pdh,
+        pdl: pd.pdl,
+        retest_level: pd.pdl,
+        last_close: last.c,
+      },
       hint: "Prior-day low break and retest fail",
     };
   }
@@ -337,7 +374,9 @@ export function evaluatePrevDayBreakRetest(
   return undefined;
 }
 
-export function evaluateEma20BreakRetest(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateEma20BreakRetest(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 30) return undefined;
   const e20 = ema(sessionCandles, 20);
   if (e20 === undefined) return undefined;
@@ -347,22 +386,34 @@ export function evaluateEma20BreakRetest(sessionCandles: Ohlc1m[]): TriggerHit |
   const vz = volumeZScore(sessionCandles, 20);
   const volumeOk = vz === undefined || vz >= env.ema20RetestMinVolumeZ;
 
-  const long = volumeOk && prev.c < e20 && last.c > e20 && last.l <= e20 * 1.001;
+  const long =
+    volumeOk && prev.c < e20 && last.c > e20 && last.l <= e20 * 1.001;
   if (long) {
     return {
       strategy: "EMA20_BREAK_RETEST",
       side: "BUY",
-      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c, volume_z: vz },
+      snapshot: {
+        ema20: e20,
+        prev_close: prev.c,
+        last_close: last.c,
+        volume_z: vz,
+      },
       hint: "EMA20 bullish reclaim with retest hold",
     };
   }
 
-  const short = volumeOk && prev.c > e20 && last.c < e20 && last.h >= e20 * 0.999;
+  const short =
+    volumeOk && prev.c > e20 && last.c < e20 && last.h >= e20 * 0.999;
   if (short) {
     return {
       strategy: "EMA20_BREAK_RETEST",
       side: "SELL",
-      snapshot: { ema20: e20, prev_close: prev.c, last_close: last.c, volume_z: vz },
+      snapshot: {
+        ema20: e20,
+        prev_close: prev.c,
+        last_close: last.c,
+        volume_z: vz,
+      },
       hint: "EMA20 bearish break with retest fail",
     };
   }
@@ -370,7 +421,9 @@ export function evaluateEma20BreakRetest(sessionCandles: Ohlc1m[]): TriggerHit |
   return undefined;
 }
 
-export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateVwapReclaimContinuation(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 35) return undefined;
   const last = sessionCandles[sessionCandles.length - 1]!;
   const last2 = sessionCandles[sessionCandles.length - 2]!;
@@ -379,7 +432,11 @@ export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): Trigg
   const vz = volumeZScore(sessionCandles, 20) ?? 0;
 
   const crossedUpRecent = last3.c < vw && last2.c > vw;
-  const long = crossedUpRecent && last2.c > vw && last.c > vw && vz >= env.vwapContinuationMinVolumeZ;
+  const long =
+    crossedUpRecent &&
+    last2.c > vw &&
+    last.c > vw &&
+    vz >= env.vwapContinuationMinVolumeZ;
   if (long) {
     return {
       strategy: "VWAP_RECLAIM_CONTINUATION",
@@ -390,7 +447,11 @@ export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): Trigg
   }
 
   const crossedDownRecent = last3.c > vw && last2.c < vw;
-  const short = crossedDownRecent && last2.c < vw && last.c < vw && vz >= env.vwapContinuationMinVolumeZ;
+  const short =
+    crossedDownRecent &&
+    last2.c < vw &&
+    last.c < vw &&
+    vz >= env.vwapContinuationMinVolumeZ;
   if (short) {
     return {
       strategy: "VWAP_RECLAIM_CONTINUATION",
@@ -403,7 +464,9 @@ export function evaluateVwapReclaimContinuation(sessionCandles: Ohlc1m[]): Trigg
   return undefined;
 }
 
-export function evaluateInitialBalanceBreakRetest(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateInitialBalanceBreakRetest(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 80) return undefined;
 
   const ibBars = barsInMinuteWindow(sessionCandles, OPEN_MIN, OPEN_MIN + 59);
@@ -420,29 +483,49 @@ export function evaluateInitialBalanceBreakRetest(sessionCandles: Ohlc1m[]): Tri
     completedAfterIb,
     ib.high,
     env.retestMaxBarsAfterBreak,
-    0.0008
+    0.0008,
   );
   const brokeDown = recentBreakBelow(
     completedAfterIb,
     ib.low,
     env.retestMaxBarsAfterBreak,
-    0.0008
+    0.0008,
   );
 
-  if (brokeUp && last.l <= ib.high * 1.001 && last.c > ib.high && last.c > prev.c) {
+  if (
+    brokeUp &&
+    last.l <= ib.high * 1.001 &&
+    last.c > ib.high &&
+    last.c > prev.c
+  ) {
     return {
       strategy: "INITIAL_BALANCE_BREAK_RETEST",
       side: "BUY",
-      snapshot: { ib_high: ib.high, ib_low: ib.low, retest_level: ib.high, last_close: last.c },
+      snapshot: {
+        ib_high: ib.high,
+        ib_low: ib.low,
+        retest_level: ib.high,
+        last_close: last.c,
+      },
       hint: "Initial balance high break and retest hold",
     };
   }
 
-  if (brokeDown && last.h >= ib.low * 0.999 && last.c < ib.low && last.c < prev.c) {
+  if (
+    brokeDown &&
+    last.h >= ib.low * 0.999 &&
+    last.c < ib.low &&
+    last.c < prev.c
+  ) {
     return {
       strategy: "INITIAL_BALANCE_BREAK_RETEST",
       side: "SELL",
-      snapshot: { ib_high: ib.high, ib_low: ib.low, retest_level: ib.low, last_close: last.c },
+      snapshot: {
+        ib_high: ib.high,
+        ib_low: ib.low,
+        retest_level: ib.low,
+        last_close: last.c,
+      },
       hint: "Initial balance low break and retest fail",
     };
   }
@@ -451,7 +534,7 @@ export function evaluateInitialBalanceBreakRetest(sessionCandles: Ohlc1m[]): Tri
 }
 
 export function evaluateVolatilityContractionBreakout(
-  sessionCandles: Ohlc1m[]
+  sessionCandles: Ohlc1m[],
 ): TriggerHit | undefined {
   if (sessionCandles.length < 50) return undefined;
 
@@ -500,7 +583,9 @@ export function evaluateVolatilityContractionBreakout(
   return undefined;
 }
 
-export function evaluateInsideBarBreakoutRetest(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateInsideBarBreakoutRetest(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 8) return undefined;
 
   const mother = sessionCandles[sessionCandles.length - 4]!;
@@ -511,22 +596,38 @@ export function evaluateInsideBarBreakoutRetest(sessionCandles: Ohlc1m[]): Trigg
   const isInside = inside.h < mother.h && inside.l > mother.l;
   if (!isInside) return undefined;
 
-  const long = breakout.c > inside.h && retest.l <= inside.h * 1.001 && retest.c > inside.h;
+  const long =
+    breakout.c > inside.h &&
+    retest.l <= inside.h * 1.001 &&
+    retest.c > inside.h;
   if (long) {
     return {
       strategy: "INSIDE_BAR_BREAKOUT_WITH_RETEST",
       side: "BUY",
-      snapshot: { mother_h: mother.h, mother_l: mother.l, inside_h: inside.h, inside_l: inside.l },
+      snapshot: {
+        mother_h: mother.h,
+        mother_l: mother.l,
+        inside_h: inside.h,
+        inside_l: inside.l,
+      },
       hint: "Inside-bar upside break and retest hold",
     };
   }
 
-  const short = breakout.c < inside.l && retest.h >= inside.l * 0.999 && retest.c < inside.l;
+  const short =
+    breakout.c < inside.l &&
+    retest.h >= inside.l * 0.999 &&
+    retest.c < inside.l;
   if (short) {
     return {
       strategy: "INSIDE_BAR_BREAKOUT_WITH_RETEST",
       side: "SELL",
-      snapshot: { mother_h: mother.h, mother_l: mother.l, inside_h: inside.h, inside_l: inside.l },
+      snapshot: {
+        mother_h: mother.h,
+        mother_l: mother.l,
+        inside_h: inside.h,
+        inside_l: inside.l,
+      },
       hint: "Inside-bar downside break and retest fail",
     };
   }
@@ -534,7 +635,9 @@ export function evaluateInsideBarBreakoutRetest(sessionCandles: Ohlc1m[]): Trigg
   return undefined;
 }
 
-export function evaluateOpenDrivePullback(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateOpenDrivePullback(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 40) return undefined;
 
   const first15 = barsInMinuteWindow(sessionCandles, OPEN_MIN, OPEN_MIN + 14);
@@ -557,25 +660,45 @@ export function evaluateOpenDrivePullback(sessionCandles: Ohlc1m[]): TriggerHit 
   const driveDown = driveRet < -0.45;
 
   const pullbackFromHighPct = ((highSinceOpen - last.l) / highSinceOpen) * 100;
-  const bounce = last.c > e20 && last.c > sessionCandles[sessionCandles.length - 2]!.c;
+  const bounce =
+    last.c > e20 && last.c > sessionCandles[sessionCandles.length - 2]!.c;
 
-  if (driveUp && pullbackFromHighPct >= 0.2 && pullbackFromHighPct <= 0.9 && bounce) {
+  if (
+    driveUp &&
+    pullbackFromHighPct >= 0.2 &&
+    pullbackFromHighPct <= 0.9 &&
+    bounce
+  ) {
     return {
       strategy: "OPEN_DRIVE_PULLBACK",
       side: "BUY",
-      snapshot: { drive_ret_pct: driveRet, ema20: e20, pullback_pct: pullbackFromHighPct },
+      snapshot: {
+        drive_ret_pct: driveRet,
+        ema20: e20,
+        pullback_pct: pullbackFromHighPct,
+      },
       hint: "Open-drive bullish move, controlled pullback, and trend resumption",
     };
   }
 
   const pullbackFromLowPct = ((last.h - lowSinceOpen) / lowSinceOpen) * 100;
-  const rejection = last.c < e20 && last.c < sessionCandles[sessionCandles.length - 2]!.c;
+  const rejection =
+    last.c < e20 && last.c < sessionCandles[sessionCandles.length - 2]!.c;
 
-  if (driveDown && pullbackFromLowPct >= 0.2 && pullbackFromLowPct <= 0.9 && rejection) {
+  if (
+    driveDown &&
+    pullbackFromLowPct >= 0.2 &&
+    pullbackFromLowPct <= 0.9 &&
+    rejection
+  ) {
     return {
       strategy: "OPEN_DRIVE_PULLBACK",
       side: "SELL",
-      snapshot: { drive_ret_pct: driveRet, ema20: e20, pullback_pct: pullbackFromLowPct },
+      snapshot: {
+        drive_ret_pct: driveRet,
+        ema20: e20,
+        pullback_pct: pullbackFromLowPct,
+      },
       hint: "Open-drive bearish move, weak pullback, and trend continuation",
     };
   }
@@ -583,7 +706,9 @@ export function evaluateOpenDrivePullback(sessionCandles: Ohlc1m[]): TriggerHit 
   return undefined;
 }
 
-export function evaluateOrbFakeoutReversal(sessionCandles: Ohlc1m[]): TriggerHit | undefined {
+export function evaluateOrbFakeoutReversal(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
   if (sessionCandles.length < 30) return undefined;
 
   const orbBars = barsInMinuteWindow(sessionCandles, OPEN_MIN, OPEN_MIN + 14);
@@ -594,10 +719,16 @@ export function evaluateOrbFakeoutReversal(sessionCandles: Ohlc1m[]): TriggerHit
   if (minuteOfBar(last) < OPEN_MIN + 25) return undefined;
 
   const postOrb = sessionCandles.filter((c) => minuteOfBar(c) > OPEN_MIN + 14);
-  const confirmBars = postOrb.slice(-Math.max(1, env.orbFakeoutConfirmationBars));
-  const confirmedInside = confirmBars.length >= env.orbFakeoutConfirmationBars &&
+  const confirmBars = postOrb.slice(
+    -Math.max(1, env.orbFakeoutConfirmationBars),
+  );
+  const confirmedInside =
+    confirmBars.length >= env.orbFakeoutConfirmationBars &&
     confirmBars.every((c) => c.c < orb.high && c.c > orb.low);
-  const breakLookback = postOrb.slice(0, -Math.max(1, env.orbFakeoutConfirmationBars));
+  const breakLookback = postOrb.slice(
+    0,
+    -Math.max(1, env.orbFakeoutConfirmationBars),
+  );
   const fakeoutUp =
     hasBreakAbove(breakLookback, orb.high, 0.0008) &&
     confirmedInside &&
@@ -627,4 +758,80 @@ export function evaluateOrbFakeoutReversal(sessionCandles: Ohlc1m[]): TriggerHit
   }
 
   return undefined;
+}
+
+/**
+ * Nifty-50 **heavyweight** lags on 5-session % while index is strong; enter long
+ * on session VWAP reclaim and/or first hold above 15m ORB high while Nifty spot
+ * holds from-open gain above session VWAP.
+ */
+export function evaluateIndexLaggardCatchup(
+  ticker: string,
+  sessionCandles: Ohlc1m[],
+  indexSessionCandles: Ohlc1m[],
+  indexPct5d: number,
+  tickerPct5d: number,
+  isBacktest = false,
+): TriggerHit | undefined {
+  if (!isNifty50Heavyweight(ticker, { isBacktest })) return undefined;
+  if (sessionCandles.length < 25) return undefined;
+  if (indexSessionCandles.length < 5) return undefined;
+
+  if (indexPct5d < env.indexLaggardNiftyPct5dMin) return undefined;
+  if (tickerPct5d > env.indexLaggardTickerPct5dMax) return undefined;
+  if (
+    !niftySessionSustainsBullish(
+      indexSessionCandles,
+      env.indexLaggardNiftySessionMinFromOpenPct
+    )
+  ) {
+    return undefined;
+  }
+
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const prev = sessionCandles[sessionCandles.length - 2]!;
+  if (minuteOfBar(last) < OPEN_MIN + 16) return undefined;
+
+  const vw = vwap(sessionCandles);
+  const vz = volumeZScore(sessionCandles, 20);
+  if (vz !== undefined && vz < env.indexLaggardMinVolumeZ) return undefined;
+
+  const orbBars = barsInMinuteWindow(sessionCandles, OPEN_MIN, OPEN_MIN + 14);
+  const orb = rangeOf(orbBars);
+  if (!orb) return undefined;
+
+  const nFirst = indexSessionCandles[0]!;
+  const nLast = indexSessionCandles[indexSessionCandles.length - 1]!;
+  const niftyFromOpenPct =
+    nFirst.o > 0 ? ((nLast.c - nFirst.o) / nFirst.o) * 100 : 0;
+
+  const vwapBreak = prev.c <= vw && last.c > vw;
+  const orbFirstBreak =
+    last.c > orb.high &&
+    prev.c <= orb.high * (1 + 0.0005) &&
+    last.c > vw;
+
+  if (!vwapBreak && !orbFirstBreak) return undefined;
+
+  const triggerCode = vwapBreak && orbFirstBreak ? 3 : vwapBreak ? 1 : 2;
+  return {
+    strategy: "INDEX_LAGGARD_CATCHUP",
+    side: "BUY",
+    snapshot: {
+      index_pct5d: indexPct5d,
+      ticker_pct5d: tickerPct5d,
+      vwap: vw,
+      orb_15m_high: orb.high,
+      nifty_from_open_pct: niftyFromOpenPct,
+      last_close: last.c,
+      volume_z: vz,
+      trigger_mode: triggerCode,
+    },
+    hint:
+      triggerCode === 3
+        ? "INDEX_LAGGARD: divergence + Nifty firm; VWAP + 15m high reclaim"
+        : triggerCode === 1
+          ? "INDEX_LAGGARD: divergence + Nifty firm; session VWAP reclaim"
+          : "INDEX_LAGGARD: divergence + Nifty firm; first break above 15m high",
+  };
 }

@@ -42,7 +42,8 @@ export function isLongBreakoutStrategy(strategy: StrategyId): boolean {
     strategy === "INITIAL_BALANCE_BREAK_RETEST" ||
     strategy === "VOLATILITY_CONTRACTION_BREAKOUT" ||
     strategy === "INSIDE_BAR_BREAKOUT_WITH_RETEST" ||
-    strategy === "OPEN_DRIVE_PULLBACK"
+    strategy === "OPEN_DRIVE_PULLBACK" ||
+    strategy === "INDEX_LAGGARD_CATCHUP"
   );
 }
 

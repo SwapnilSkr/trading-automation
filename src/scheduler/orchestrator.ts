@@ -21,6 +21,10 @@ import {
   nowIST,
 } from "../time/ist.js";
 import { resolveWatchlistTickers } from "../services/watchlist.js";
+import {
+  getNifty50HeavyweightSupplementalTickers,
+  resolveNifty50HeavyweightsLive,
+} from "../market/niftyHeavyweights.js";
 import { currentRunMode, describeMode, type RunMode } from "./mode.js";
 
 export class TradingOrchestrator {
@@ -110,6 +114,22 @@ export class TradingOrchestrator {
             this.engine.setYesterdaysLessons(lesson?.summary);
             if (lesson) {
               console.log("[Orchestrator] loaded yesterday's lessons for judge context");
+            }
+          }
+          if (
+            env.niftyHeavyweightsMode === "dynamic" &&
+            env.backtestEnableIndexLaggardCatchup
+          ) {
+            try {
+              await this.broker.refreshSessionIfNeeded();
+              const hw = await resolveNifty50HeavyweightsLive(this.broker);
+              console.log(
+                `[Orchestrator] Nifty-50 laggard universe (dynamic, top ${env.niftyHeavyweightsDynamicTopN}): ${hw.join(", ")}`
+              );
+            } catch (e) {
+              console.warn(
+                `[Orchestrator] dynamic Nifty-50 heavyweights failed: ${String(e).slice(0, 200)}`
+              );
             }
           }
         }
@@ -309,7 +329,15 @@ export class TradingOrchestrator {
             .minus({ minutes: lookbackMins })
             .startOf("minute")
             .toJSDate();
-      const results = await syncOhlcForRange(this.broker, from, end, tickers);
+      const hw =
+        env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+          ? await getNifty50HeavyweightSupplementalTickers(this.broker)
+          : [];
+      const syncList =
+        env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+          ? [...new Set([...tickers, env.niftySymbol, ...hw])]
+          : tickers;
+      const results = await syncOhlcForRange(this.broker, from, end, syncList);
       const tickersWithBars = results.filter((r) => r.bars > 0).length;
       const totalBars = results.reduce((s, r) => s + r.bars, 0);
       console.log(

@@ -27,7 +27,8 @@ function str(name: string, def: string): string {
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
-  mongoUri: () => req("MONGODB_URI", "mongodb://127.0.0.1:27017/trading-automation"),
+  mongoUri: () =>
+    req("MONGODB_URI", "mongodb://127.0.0.1:27017/trading-automation"),
   mongoDbName: process.env.MONGODB_DB ?? "trading-automation",
 
   pineconeApiKey: () => process.env.PINECONE_API_KEY ?? "",
@@ -35,14 +36,16 @@ export const env = {
   pineconeNamespace: process.env.PINECONE_NAMESPACE ?? "golden-patterns",
 
   /** OpenAI-compatible embeddings (text-embedding-3-small → 1536 dims) */
-  embeddingApiKey: () => process.env.OPENAI_API_KEY ?? process.env.EMBEDDING_API_KEY ?? "",
+  embeddingApiKey: () =>
+    process.env.OPENAI_API_KEY ?? process.env.EMBEDDING_API_KEY ?? "",
   embeddingModel: process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
   embeddingBaseUrl:
     process.env.EMBEDDING_BASE_URL ?? "https://api.openai.com/v1",
 
   /** Judge / simulation (OpenRouter or OpenAI-compatible) */
   openRouterApiKey: () => process.env.OPENROUTER_API_KEY ?? "",
-  openRouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+  openRouterBaseUrl:
+    process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   judgeModel: process.env.JUDGE_MODEL ?? "deepseek/deepseek-chat",
   /** AI operator CLI planner model */
   opsAiModel: process.env.OPS_AI_MODEL ?? "google/gemma-4-31b-it:free",
@@ -55,7 +58,10 @@ export const env = {
   /** Funnel optimizer: dominant blocker share threshold (0-1) */
   funnelOptimizerDominancePct: num("FUNNEL_OPTIMIZER_DOMINANCE_PCT", 0.35),
   /** Funnel optimizer: max env tuning applies allowed per IST week */
-  funnelOptimizerMaxChangesPerWeek: num("FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK", 1),
+  funnelOptimizerMaxChangesPerWeek: num(
+    "FUNNEL_OPTIMIZER_MAX_CHANGES_PER_WEEK",
+    1,
+  ),
   /** Phase 8 validation: lookback days for KPI report */
   phase8ValidationLookbackDays: num("PHASE8_VALIDATION_LOOKBACK_DAYS", 5),
   /** Phase 8 target: execution rate minimum (executed/total decisions) */
@@ -63,7 +69,7 @@ export const env = {
   /** Phase 8 target: execution rate upper guidance */
   phase8TargetExecRateMax: num("PHASE8_TARGET_EXEC_RATE_MAX", 0.05),
   /** Phase 8 target: maximum losing-day ratio */
-  phase8TargetLosingDayPctMax: num("PHASE8_TARGET_LOSING_DAY_PCT_MAX", 0.30),
+  phase8TargetLosingDayPctMax: num("PHASE8_TARGET_LOSING_DAY_PCT_MAX", 0.3),
   /** Phase 8 target: replay profit factor floor */
   phase8TargetReplayPfMin: num("PHASE8_TARGET_REPLAY_PF_MIN", 1.2),
   /** Phase 8 guardrail: max allowed worst daily loss (absolute INR) */
@@ -103,7 +109,10 @@ export const env = {
   /** Replay: min headlines per weekday in `news_archive`; below this is treated as weak coverage */
   backtestNewsMinHeadlinesPerDay: num("BACKTEST_NEWS_MIN_HEADLINES_PER_DAY", 8),
   /** Replay auto-backfill mode: bypass market-keyword filter and keep raw ET archive headlines */
-  backtestNewsAutoBackfillNoFilter: bool("BACKTEST_NEWS_AUTO_BACKFILL_NO_FILTER", false),
+  backtestNewsAutoBackfillNoFilter: bool(
+    "BACKTEST_NEWS_AUTO_BACKFILL_NO_FILTER",
+    false,
+  ),
 
   angelApiKey: process.env.ANGEL_API_KEY ?? "",
   /** Dashboard secret (UUID); REST login uses API key + PIN + TOTP per SmartAPI docs */
@@ -165,6 +174,24 @@ export const env = {
   /** Pause between Angel `/quote` batches (≤50 symbols each, ~1 rps) */
   quoteBatchDelayMs: num("QUOTE_BATCH_DELAY_MS", 1100),
 
+  /**
+   * **NSE** (not SmartAPI): minimum gap between `nsearchives.nseindia.com` CSV fetches
+   * in-process so we are polite to static hosts. Angel limits do not apply.
+   */
+  nseArchivesMinGapMs: num("NSE_ARCHIVES_MIN_GAP_MS", 10_000),
+  /**
+   * `static` — baked-in `DEFAULT_NIFTY50_HEAVYWEIGHTS` for INDEX_LAGGARD supplement lists.
+   * `dynamic` — NSE `ind_nifty50list.csv` + top N by LTP×volume via Angel `marketQuote` (see rate limiter).
+   */
+  niftyHeavyweightsMode: (() => {
+    const v = (process.env.NIFTY_HEAVYWEIGHTS_MODE ?? "static")
+      .trim()
+      .toLowerCase();
+    return v === "dynamic" ? "dynamic" : "static";
+  })(),
+  /** How many names to keep from turnover ranking (default: top 10 “heavyweight” proxy). */
+  niftyHeavyweightsDynamicTopN: num("NIFTY_HEAVYWEIGHTS_TOP_N", 10),
+
   /** Run discovery-sync once per weekday ~18:00 IST (POST_MORTEM window) */
   nightlyDiscoveryEnabled: process.env.NIGHTLY_DISCOVERY !== "false",
 
@@ -180,15 +207,16 @@ export const env = {
   maxConcurrentTrades: num("MAX_CONCURRENT_TRADES", 5),
   executionEnv: (process.env.EXECUTION_ENV ?? "PAPER") as "PAPER" | "LIVE",
 
-  watchedTickers: (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY").split(",").map((s) => s.trim()),
+  watchedTickers: (process.env.WATCHED_TICKERS ?? "RELIANCE,TCS,INFY")
+    .split(",")
+    .map((s) => s.trim()),
 
   /**
    * `env` — use `WATCHED_TICKERS` only.
    * `active_watchlist` — use Mongo `active_watchlist` doc `_id: current_session` (from discovery-sync).
    */
-  tradingTickerSource: (process.env.TRADING_TICKER_SOURCE ?? "active_watchlist") as
-    | "env"
-    | "active_watchlist",
+  tradingTickerSource: (process.env.TRADING_TICKER_SOURCE ??
+    "active_watchlist") as "env" | "active_watchlist",
 
   /** Extra gap between symbols during discovery (daily fetch + scrip resolve); stay ≥1000ms under Angel limits */
   discoverySymbolDelayMs: num("DISCOVERY_SYMBOL_DELAY_MS", 2000),
@@ -204,7 +232,10 @@ export const env = {
   /** Adaptive judge cooldown lower bound (high-quality setups) */
   adaptiveJudgeCooldownMinMs: num("ADAPTIVE_JUDGE_COOLDOWN_MIN_MS", 60 * 1000),
   /** Adaptive judge cooldown upper bound (low-quality setups) */
-  adaptiveJudgeCooldownMaxMs: num("ADAPTIVE_JUDGE_COOLDOWN_MAX_MS", 5 * 60 * 1000),
+  adaptiveJudgeCooldownMaxMs: num(
+    "ADAPTIVE_JUDGE_COOLDOWN_MAX_MS",
+    5 * 60 * 1000,
+  ),
   /** Retry cooldown for strategy:ticker pairs blocked by hard risk veto */
   riskVetoRetryCooldownMs: num("RISK_VETO_RETRY_COOLDOWN_MS", 60 * 1000),
   /** If true, rank and cap candidate triggers per ticker before full decisioning */
@@ -241,7 +272,7 @@ export const env = {
   /** Cooldown for ticker-specific rescue sync when bars are insufficient */
   liveExecTickerResyncCooldownMinutes: num(
     "LIVE_EXEC_TICKER_RESYNC_COOLDOWN_MINUTES",
-    10
+    10,
   ),
 
   /** If top Pinecone neighbor is this similar and outcome WIN, skip LLM */
@@ -254,7 +285,10 @@ export const env = {
   /** Consensus gate: minimum weighted win rate across strong neighbors */
   pineconeGateMinWinRate: num("PINECONE_GATE_MIN_WIN_RATE", 0.6),
   /** Consensus gate: same-strategy neighbor requirement */
-  pineconeGateRequireSameStrategy: bool("PINECONE_GATE_REQUIRE_SAME_STRATEGY", true),
+  pineconeGateRequireSameStrategy: bool(
+    "PINECONE_GATE_REQUIRE_SAME_STRATEGY",
+    true,
+  ),
   /** Consensus gate: same-sector neighbor weight multiplier */
   pineconeGateSameSectorWeight: num("PINECONE_GATE_SAME_SECTOR_WEIGHT", 1.2),
   /** Consensus gate: same-vol-regime neighbor weight multiplier */
@@ -274,28 +308,37 @@ export const env = {
   /** If true, auto-disable Pinecone reads after RU quota/rate-limit exhaustion */
   pineconeAutoDisableReadsOnRuExhaust: bool(
     "PINECONE_AUTO_DISABLE_READS_ON_RU_EXHAUST",
-    true
+    true,
   ),
   /** If true, auto-disable Pinecone writes after WU quota/rate-limit exhaustion */
   pineconeAutoDisableWritesOnWuExhaust: bool(
     "PINECONE_AUTO_DISABLE_WRITES_ON_WU_EXHAUST",
-    true
+    true,
   ),
   /** If true, storage-full upserts trigger oldest-id eviction and retry */
   pineconeAutoEvictOnStorageFull: bool(
     "PINECONE_AUTO_EVICT_ON_STORAGE_FULL",
-    true
+    true,
   ),
   /** Oldest IDs removed in one eviction pass when storage is full */
   pineconeStorageEvictBatch: num("PINECONE_STORAGE_EVICT_BATCH", 200),
   /** Max pages scanned while collecting eviction candidates */
   pineconeStorageEvictScanPages: num("PINECONE_STORAGE_EVICT_SCAN_PAGES", 10),
   /** Wait after delete before retrying upsert (storage reallocation lag) */
-  pineconeStorageReallocateWaitMs: num("PINECONE_STORAGE_REALLOCATE_WAIT_MS", 20_000),
+  pineconeStorageReallocateWaitMs: num(
+    "PINECONE_STORAGE_REALLOCATE_WAIT_MS",
+    20_000,
+  ),
   /** Max eviction+retry attempts for one upsert */
-  pineconeStorageMaxEvictionRetries: num("PINECONE_STORAGE_MAX_EVICTION_RETRIES", 3),
+  pineconeStorageMaxEvictionRetries: num(
+    "PINECONE_STORAGE_MAX_EVICTION_RETRIES",
+    3,
+  ),
   /** Cooldown between governor state writes/log lines */
-  pineconeGovernorLogCooldownMs: num("PINECONE_GOVERNOR_LOG_COOLDOWN_MS", 60_000),
+  pineconeGovernorLogCooldownMs: num(
+    "PINECONE_GOVERNOR_LOG_COOLDOWN_MS",
+    60_000,
+  ),
 
   /**
    * If set, `POST /v1/emergency/square-off` requires header `X-Emergency-Key: <value>`.
@@ -329,18 +372,33 @@ export const env = {
   /** If true, non-catastrophic portfolio breaches use size throttles instead of hard veto */
   riskSoftThrottlesEnabled: bool("RISK_SOFT_THROTTLES_ENABLED", true),
   /** Size multiplier when sector cap is exceeded under soft-throttle mode */
-  softSectorOverflowSizeMultiplier: num("SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER", 0.75),
+  softSectorOverflowSizeMultiplier: num(
+    "SOFT_SECTOR_OVERFLOW_SIZE_MULTIPLIER",
+    0.75,
+  ),
   /** Size multiplier when same-side cap is exceeded under soft-throttle mode */
-  softSameSideOverflowSizeMultiplier: num("SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER", 0.65),
+  softSameSideOverflowSizeMultiplier: num(
+    "SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER",
+    0.65,
+  ),
   /** Correlation above this level is treated as catastrophic and hard-blocked */
   softCorrelationHardBlock: num("SOFT_CORRELATION_HARD_BLOCK", 0.9),
   /** Minimum size multiplier reached as correlation approaches hard-block level */
-  softCorrelationMinSizeMultiplier: num("SOFT_CORRELATION_MIN_SIZE_MULTIPLIER", 0.5),
+  softCorrelationMinSizeMultiplier: num(
+    "SOFT_CORRELATION_MIN_SIZE_MULTIPLIER",
+    0.5,
+  ),
 
   // ── Market regime hard gates ───────────────────────────────────────────────
   marketGateEnabled: bool("MARKET_GATE_ENABLED", true),
-  marketBlockLongBreakoutsNiftyPct: num("MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT", -1.0),
-  marketBlockLongBreakoutsBreadth: num("MARKET_BLOCK_LONG_BREAKOUTS_BREADTH", 0.3),
+  marketBlockLongBreakoutsNiftyPct: num(
+    "MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT",
+    -1.0,
+  ),
+  marketBlockLongBreakoutsBreadth: num(
+    "MARKET_BLOCK_LONG_BREAKOUTS_BREADTH",
+    0.3,
+  ),
   marketWeakNiftyPct: num("MARKET_WEAK_NIFTY_PCT", -0.5),
   marketWeakBreadth: num("MARKET_WEAK_BREADTH", 0.4),
   marketWeakSizeMultiplier: num("MARKET_WEAK_SIZE_MULTIPLIER", 0.5),
@@ -372,8 +430,14 @@ export const env = {
   sessionLateEnd: str("SESSION_LATE_END", "15:00"),
   sessionLateSizeMultiplier: num("SESSION_LATE_SIZE_MULTIPLIER", 0.75),
   sessionLateConfidenceFloor: num("SESSION_LATE_CONFIDENCE_FLOOR", 0.67),
-  sessionLowConvictionBlockAfter: str("SESSION_LOW_CONVICTION_BLOCK_AFTER", "15:00"),
-  sessionLowConvictionMinConfidence: num("SESSION_LOW_CONVICTION_MIN_CONFIDENCE", 0.72),
+  sessionLowConvictionBlockAfter: str(
+    "SESSION_LOW_CONVICTION_BLOCK_AFTER",
+    "15:00",
+  ),
+  sessionLowConvictionMinConfidence: num(
+    "SESSION_LOW_CONVICTION_MIN_CONFIDENCE",
+    0.72,
+  ),
 
   // ── Trigger quality gates ─────────────────────────────────────────────────
   ema20RetestMinVolumeZ: num("EMA20_RETEST_MIN_VOLUME_Z", 0),
@@ -385,7 +449,7 @@ export const env = {
   /** Stop-loss distance from entry as fraction (fallback when ATR unavailable) */
   exitStopPct: num("EXIT_STOP_PCT", 0.012),
   /** Profit-target distance from entry as fraction (fallback when ATR unavailable) */
-  exitTargetPct: num("EXIT_TARGET_PCT", 0.020),
+  exitTargetPct: num("EXIT_TARGET_PCT", 0.02),
   /** Profit % that activates the trailing stop (fallback when ATR unavailable) */
   exitTrailTriggerPct: num("EXIT_TRAIL_TRIGGER_PCT", 0.008),
   /** Trailing stop distance from peak as fraction (fallback when ATR unavailable) */
@@ -396,8 +460,7 @@ export const env = {
   backtestEnableOrb15m: process.env.BACKTEST_ENABLE_ORB_15M !== "false",
   backtestEnableOrbRetest15m:
     process.env.BACKTEST_ENABLE_ORB_RETEST_15M !== "false",
-  backtestEnableMeanRevZ:
-    process.env.BACKTEST_ENABLE_MEAN_REV_Z !== "false",
+  backtestEnableMeanRevZ: process.env.BACKTEST_ENABLE_MEAN_REV_Z !== "false",
   backtestEnableBigBoySweep:
     process.env.BACKTEST_ENABLE_BIG_BOY_SWEEP !== "false",
   backtestEnableVwapReclaimReject:
@@ -420,6 +483,31 @@ export const env = {
     process.env.BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK !== "false",
   backtestEnableOrbFakeoutReversal:
     process.env.BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL !== "false",
+  /** Nifty-50 overweight catch-up (heavyweights only) — needs NIFTY50 + 1m history in Mongo */
+  backtestEnableIndexLaggardCatchup: bool(
+    "BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP",
+    true,
+  ),
+  /** Min 5-session % for NIFTY (same definition as discovery pct5d) */
+  indexLaggardNiftyPct5dMin: num("INDEX_LAGGARD_NIFTY_PCT5D_MIN", 0.8),
+  /** Laggard must be ≤ this 5-session % (flat/weak) */
+  indexLaggardTickerPct5dMax: num("INDEX_LAGGARD_TICKER_PCT5D_MAX", 0.2),
+  /** Nifty **today** from open must be ≥ this % to count as “sustaining” with VWAP */
+  indexLaggardNiftySessionMinFromOpenPct: num(
+    "INDEX_LAGGARD_NIFTY_SESSION_MIN_FROM_OPEN_PCT",
+    0.05,
+  ),
+  indexLaggardMinVolumeZ: num("INDEX_LAGGARD_MIN_VOLUME_Z", 0.25),
+  /** When true, discovery-sync OHLC also pulls NIFTY50 + Nifty-50 top weights */
+  discoverySyncIndexLaggardUniverse: bool(
+    "DISCOVERY_SYNC_INDEX_LAGGARD_UNIVERSE",
+    true,
+  ),
+  /** Exec auto-sync: always include NIFTY50 + heavyweights (deduped with watchlist) */
+  liveExecSyncSupplementLaggardUniverse: bool(
+    "LIVE_EXEC_SYNC_SUPPLEMENT_LAGGARD_UNIVERSE",
+    true,
+  ),
 
   // ── ATR-based position sizing ────────────────────────────────────────────
   /** Account equity for risk calculation (INR) */
@@ -455,9 +543,15 @@ export const env = {
   /** If true, blend raw judge confidence with empirical bucket outcomes */
   confidenceCalibrationEnabled: bool("CONFIDENCE_CALIBRATION_ENABLED", true),
   /** Lookback in days for building live confidence calibration table */
-  confidenceCalibrationLookbackDays: num("CONFIDENCE_CALIBRATION_LOOKBACK_DAYS", 45),
+  confidenceCalibrationLookbackDays: num(
+    "CONFIDENCE_CALIBRATION_LOOKBACK_DAYS",
+    45,
+  ),
   /** Minimum closed trades needed before calibration is applied */
-  confidenceCalibrationMinSamples: num("CONFIDENCE_CALIBRATION_MIN_SAMPLES", 80),
+  confidenceCalibrationMinSamples: num(
+    "CONFIDENCE_CALIBRATION_MIN_SAMPLES",
+    80,
+  ),
   /** Blend weight toward empirical confidence (0=no calibration, 1=fully empirical) */
   confidenceCalibrationWeight: num("CONFIDENCE_CALIBRATION_WEIGHT", 0.5),
 
@@ -482,7 +576,10 @@ export const env = {
   /** If true, strategy gate uses decay-weighted PF/WR (recent trades matter more) */
   strategyGateDecayEnabled: bool("STRATEGY_GATE_DECAY_ENABLED", true),
   /** Half-life in trades for decay weighting (lower = more recent emphasis) */
-  strategyGateDecayHalfLifeTrades: num("STRATEGY_GATE_DECAY_HALFLIFE_TRADES", 10),
+  strategyGateDecayHalfLifeTrades: num(
+    "STRATEGY_GATE_DECAY_HALFLIFE_TRADES",
+    10,
+  ),
   /** If true, disabled strategies can auto-reenable after cooldown + improvement */
   strategyReenableEnabled: bool("STRATEGY_REENABLE_ENABLED", true),
   /** Minimum days a strategy stays disabled before re-enable checks apply */
@@ -502,11 +599,11 @@ export const env = {
   /** If true, gate strategies by intraday realized-volatility regime (low/mid/high) */
   volRegimeSwitchEnabled: bool("VOL_REGIME_SWITCH_ENABLED", true),
   /** Number of bars used to compute realized-volatility regime */
-  volRegimeLookbackBars: num("VOL_REGIME_LOOKBACK_BARS", 30),
+  volRegimeLookbackBars: num("VOL_REGIME_LOOKBACK_BARS", 20),
   /** Low regime threshold: realized vol % below this is LOW */
   volRegimeLowMaxPct: num("VOL_REGIME_LOW_MAX_PCT", 0.08),
-  /** High regime threshold: realized vol % at/above this is HIGH */
-  volRegimeHighMinPct: num("VOL_REGIME_HIGH_MIN_PCT", 0.22),
+  /** High regime threshold: realized vol % at/above this is HIGH (raised from 0.22 — was too aggressive) */
+  volRegimeHighMinPct: num("VOL_REGIME_HIGH_MIN_PCT", 0.35),
   /** Breakout strategies: clean breakouts in LOW-MID, too choppy in HIGH */
   volRegimeOrbLow: bool("VOL_REGIME_ORB_LOW", true),
   volRegimeOrbMid: bool("VOL_REGIME_ORB_MID", true),
@@ -539,12 +636,12 @@ export const env = {
   /** Additional slippage bps for each 1% participation of bar volume */
   backtestImpactBpsPer1PctParticipation: num(
     "BACKTEST_IMPACT_BPS_PER_1PCT_PARTICIPATION",
-    0.25
+    0.25,
   ),
   /** Scales bar-range-derived volatility into slippage bps */
   backtestVolatilitySlippageCoeff: num(
     "BACKTEST_VOLATILITY_SLIPPAGE_COEFF",
-    0.1
+    0.1,
   ),
   /** Enable fee/tax model in backtest PnL */
   backtestFeesEnabled: process.env.BACKTEST_FEES_ENABLED !== "false",
