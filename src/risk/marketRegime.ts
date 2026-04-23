@@ -43,7 +43,8 @@ export function isLongBreakoutStrategy(strategy: StrategyId): boolean {
     strategy === "VOLATILITY_CONTRACTION_BREAKOUT" ||
     strategy === "INSIDE_BAR_BREAKOUT_WITH_RETEST" ||
     strategy === "OPEN_DRIVE_PULLBACK" ||
-    strategy === "INDEX_LAGGARD_CATCHUP"
+    strategy === "INDEX_LAGGARD_CATCHUP" ||
+    strategy === "EMA_RIBBON_TREND"
   );
 }
 

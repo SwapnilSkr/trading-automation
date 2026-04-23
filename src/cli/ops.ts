@@ -41,6 +41,8 @@ import {
   NIFTY50_HEAVYWEIGHT_TICKERS,
   resolveNifty50HeavyweightsLive,
 } from "../market/niftyHeavyweights.js";
+import { classifyVolRegimeFromCandles } from "../market/volRegime.js";
+import { loadStrategyHealth } from "../execution/strategyTracker.js";
 import { runCli } from "./runCli.js";
 
 interface ParsedArgs {
@@ -99,6 +101,89 @@ interface DecisionFunnel {
   judgeDenyOrOther: number;
 }
 
+interface OpenPositionRow {
+  ticker: string;
+  strategy: string;
+  side: "BUY" | "SELL";
+  entryPrice: number;
+  entryTimeStr: string;
+  qty: number;
+  atrAtEntry?: number;
+}
+
+interface ClosedTradeRow {
+  ticker: string;
+  strategy: string;
+  side: "BUY" | "SELL";
+  pnl: number;
+  pnlPct?: number;
+  outcome: string;
+  exitTimeStr: string;
+}
+
+interface StrategyStats {
+  strategy: string;
+  total: number;
+  executed: number;
+  riskVeto: number;
+  cooldownJudge: number;
+  cooldownRisk: number;
+  layer1Veto: number;
+  confFloor: number;
+  judgeDeny: number;
+  wins: number;
+  losses: number;
+  pnl: number;
+}
+
+interface BlockReasonRow {
+  reason: string;
+  count: number;
+  tickers: string[];
+}
+
+interface TickerVolRegimeRow {
+  ticker: string;
+  regime: "LOW" | "MID" | "HIGH" | "???";
+  sigma?: number;
+  bars: number;
+  orbAllowed: boolean;
+  vwapAllowed: boolean;
+  meanRevAllowed: boolean;
+}
+
+interface StrategyGateRow {
+  strategy: string;
+  allowed: boolean;
+  pf: number;
+  wr: number;
+  trades: number;
+  reason?: string;
+}
+
+interface SessionTotals {
+  decisions: number;
+  executed: number;
+  openCount: number;
+  closedCount: number;
+  realizedPnl: number;
+  wins: number;
+  losses: number;
+  execRate: number;
+}
+
+interface SessionDashboard {
+  date: string;
+  asOf: string;
+  openPositions: OpenPositionRow[];
+  closedTrades: ClosedTradeRow[];
+  strategyStats: StrategyStats[];
+  topBlockReasons: BlockReasonRow[];
+  volRegimes: TickerVolRegimeRow[];
+  strategyGate: StrategyGateRow[];
+  totals: SessionTotals;
+}
+
 interface SentinelSuggestion {
   action:
     | "prepare"
@@ -116,6 +201,7 @@ interface SentinelSuggestion {
 type MainMenuAction =
   | "refresh"
   | "suggested"
+  | "session-dashboard"
   | "judge-cooldown"
   | "daemon-control"
   | "repair-missing-days"
@@ -147,6 +233,11 @@ const MAIN_MENU: MenuEntry[] = [
     action: "suggested",
     label: "Run suggested action (sentinel)",
     aliases: ["next", "sentinel", "suggest", "auto"],
+  },
+  {
+    action: "session-dashboard",
+    label: "Live session dashboard (trades, funnel, vol regime, gate)",
+    aliases: ["live", "dash", "dashboard", "session", "ld", "monitor"],
   },
   {
     action: "judge-cooldown",
@@ -727,33 +818,390 @@ function printMenu(currentDate: string): void {
   for (let i = 0; i < MAIN_MENU.length; i++) {
     console.log(`  ${i + 1}. ${MAIN_MENU[i]!.label}`);
   }
-  console.log("  Tip: press Enter to refresh, or type aliases like `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `phase8`, `heavyweights`, `date`, `replay`, `range`, `help`.");
+  console.log("  Tip: press Enter to refresh. Aliases: `live` (session dashboard), `sentinel`, `cooldown`, `daemon`, `repair`, `funnel`, `phase8`, `hw`, `date`, `replay`, `range`, `help`.");
+}
+
+// ── Session dashboard helpers ────────────────────────────────────────────────
+
+function col(s: string, width: number): string {
+  return s.length >= width ? s.slice(0, width) : s + " ".repeat(width - s.length);
+}
+
+function fmtPnl(pnl: number): string {
+  const sign = pnl >= 0 ? "+" : "";
+  return `${sign}₹${pnl.toFixed(0)}`;
+}
+
+function fmtPct(pct: number | undefined): string {
+  if (pct === undefined) return "";
+  const sign = pct >= 0 ? "+" : "";
+  return `(${sign}${pct.toFixed(2)}%)`;
+}
+
+async function computeVolRegimesForTickers(
+  tickers: string[],
+  from: Date,
+  to: Date
+): Promise<TickerVolRegimeRow[]> {
+  const db = await getDb();
+  const lookback = Math.max(10, Math.floor(env.volRegimeLookbackBars));
+  const result: TickerVolRegimeRow[] = [];
+
+  for (const ticker of tickers.slice(0, 20)) {
+    const bars = await db
+      .collection<Ohlc1m>(collections.ohlc1m)
+      .find({ ticker, ts: { $gte: from, $lte: to } })
+      .sort({ ts: 1 })
+      .toArray();
+
+    const regime = bars.length >= lookback + 1
+      ? classifyVolRegimeFromCandles(bars)
+      : undefined;
+
+    let sigma: number | undefined;
+    if (bars.length >= lookback + 1) {
+      const slice = bars.slice(-lookback - 1);
+      const returns: number[] = [];
+      for (let i = 1; i < slice.length; i++) {
+        const prev = slice[i - 1]!.c;
+        const curr = slice[i]!.c;
+        if (prev > 0) returns.push(((curr - prev) / prev) * 100);
+      }
+      if (returns.length >= 8) {
+        const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+        const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / returns.length;
+        sigma = Math.sqrt(variance);
+      }
+    }
+
+    const r = regime ?? "MID";
+    const orbAllowed = regime
+      ? (r === "LOW" ? env.volRegimeOrbLow : r === "MID" ? env.volRegimeOrbMid : env.volRegimeOrbHigh)
+      : true;
+    const vwapAllowed = regime
+      ? (r === "LOW" ? env.volRegimeVwapLow : r === "MID" ? env.volRegimeVwapMid : env.volRegimeVwapHigh)
+      : true;
+    const meanRevAllowed = regime
+      ? (r === "LOW" ? env.volRegimeMeanRevLow : r === "MID" ? env.volRegimeMeanRevMid : env.volRegimeMeanRevHigh)
+      : true;
+
+    result.push({
+      ticker,
+      regime: regime ?? "???",
+      sigma,
+      bars: bars.length,
+      orbAllowed,
+      vwapAllowed,
+      meanRevAllowed,
+    });
+  }
+  return result;
+}
+
+async function loadSessionDashboard(date: string): Promise<SessionDashboard> {
+  const allTrades = await tradesForDay(date);
+  const { from, to } = sessionRange(date);
+
+  const openPositions: OpenPositionRow[] = allTrades
+    .filter((t) => t.order_executed === true && !t.result)
+    .map((t) => ({
+      ticker: t.ticker,
+      strategy: t.strategy,
+      side: t.side ?? "BUY",
+      entryPrice: t.entry_price ?? 0,
+      entryTimeStr: DateTime.fromJSDate(t.entry_time, { zone: IST }).toFormat("HH:mm"),
+      qty: t.qty ?? 0,
+      atrAtEntry: t.atr_at_entry,
+    }));
+
+  const closedTrades: ClosedTradeRow[] = allTrades
+    .filter((t) => t.order_executed === true && t.result)
+    .map((t) => ({
+      ticker: t.ticker,
+      strategy: t.strategy,
+      side: t.side ?? "BUY",
+      pnl: t.result?.pnl ?? 0,
+      pnlPct: t.result?.pnl_percent,
+      outcome: t.result?.outcome ?? "?",
+      exitTimeStr: t.exit_time
+        ? DateTime.fromJSDate(t.exit_time, { zone: IST }).toFormat("HH:mm")
+        : "--:--",
+    }));
+
+  // Per-strategy funnel
+  const stratMap = new Map<string, StrategyStats>();
+  for (const t of allTrades) {
+    const s = t.strategy ?? "UNKNOWN";
+    if (!stratMap.has(s)) {
+      stratMap.set(s, {
+        strategy: s, total: 0, executed: 0, riskVeto: 0,
+        cooldownJudge: 0, cooldownRisk: 0, layer1Veto: 0,
+        confFloor: 0, judgeDeny: 0, wins: 0, losses: 0, pnl: 0,
+      });
+    }
+    const row = stratMap.get(s)!;
+    row.total++;
+    if (t.order_executed === true) {
+      row.executed++;
+      if (t.result?.outcome === "WIN") { row.wins++; row.pnl += t.result.pnl ?? 0; }
+      else if (t.result?.outcome === "LOSS") { row.losses++; row.pnl += t.result.pnl ?? 0; }
+    } else {
+      const reason = t.ai_reasoning ?? "";
+      if (reason.startsWith("RISK_VETO:")) row.riskVeto++;
+      else if (reason.startsWith("COOLDOWN_JUDGE:")) row.cooldownJudge++;
+      else if (reason.startsWith("COOLDOWN_RISK_VETO:")) row.cooldownRisk++;
+      else if (reason.startsWith("LAYER1_VETO:")) row.layer1Veto++;
+      else if (reason.startsWith("CONFIDENCE_FLOOR:")) row.confFloor++;
+      else row.judgeDeny++;
+    }
+  }
+
+  // Detailed block reasons — unpack risk_eval/market_eval sub-reasons
+  const blockMap = new Map<string, { count: number; tickers: Set<string> }>();
+  const addBlock = (label: string, ticker: string) => {
+    const e = blockMap.get(label) ?? { count: 0, tickers: new Set<string>() };
+    e.count++;
+    e.tickers.add(ticker);
+    blockMap.set(label, e);
+  };
+
+  for (const t of allTrades.filter((tr) => !tr.order_executed)) {
+    const reason = t.ai_reasoning ?? "";
+    if (reason.startsWith("RISK_VETO:")) {
+      const subReasons = [
+        ...(t.risk_eval?.reasons ?? []),
+        ...(t.market_eval?.reasons ?? []),
+      ];
+      if (subReasons.length > 0) {
+        for (const sr of subReasons) {
+          addBlock(sr.length > 70 ? sr.slice(0, 70) : sr, t.ticker);
+        }
+      } else {
+        addBlock("risk_veto (no sub-reason)", t.ticker);
+      }
+    } else if (reason.startsWith("COOLDOWN_JUDGE:")) {
+      addBlock("cooldown_judge", t.ticker);
+    } else if (reason.startsWith("COOLDOWN_RISK_VETO:")) {
+      addBlock("cooldown_risk_veto", t.ticker);
+    } else if (reason.startsWith("LAYER1_VETO:")) {
+      const detail = reason.slice("LAYER1_VETO:".length).trim().split(";")[0]?.trim() ?? "";
+      addBlock(`layer1_veto${detail ? ` (${detail})` : ""}`, t.ticker);
+    } else if (reason.startsWith("CONFIDENCE_FLOOR:")) {
+      addBlock("confidence_floor", t.ticker);
+    } else {
+      // Judge deny — try to extract first word of reasoning
+      const snippet = reason.slice(0, 50).replace(/\s+/g, " ").trim();
+      addBlock(`judge_deny: ${snippet || "no reason"}`, t.ticker);
+    }
+  }
+
+  const topBlockReasons: BlockReasonRow[] = [...blockMap.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 12)
+    .map(([reason, data]) => ({
+      reason,
+      count: data.count,
+      tickers: [...data.tickers].slice(0, 4),
+    }));
+
+  // Vol regime per watchlist ticker
+  const activeWl = await getSessionWatchlist();
+  const watchlistTickers =
+    activeWl?.tickers?.slice(0, 20) ?? env.watchedTickers;
+  const volRegimes = await computeVolRegimesForTickers(watchlistTickers, from, to);
+
+  // Strategy auto-gate status
+  const healthMap = await loadStrategyHealth();
+  const strategyGate: StrategyGateRow[] = [...healthMap.values()]
+    .sort((a, b) => {
+      if (a.allowed !== b.allowed) return a.allowed ? -1 : 1;
+      return b.trades - a.trades;
+    })
+    .map((h) => ({
+      strategy: h.strategy,
+      allowed: h.allowed,
+      pf: h.profitFactor,
+      wr: h.winRate,
+      trades: h.trades,
+      reason: h.reason,
+    }));
+
+  const executedAll = allTrades.filter((t) => t.order_executed === true);
+  const realizedPnl = closedTrades.reduce((s, t) => s + t.pnl, 0);
+
+  return {
+    date,
+    asOf: nowIST().toFormat("HH:mm"),
+    openPositions,
+    closedTrades,
+    strategyStats: [...stratMap.values()].sort((a, b) => b.total - a.total),
+    topBlockReasons,
+    volRegimes,
+    strategyGate,
+    totals: {
+      decisions: allTrades.length,
+      executed: executedAll.length,
+      openCount: openPositions.length,
+      closedCount: closedTrades.length,
+      realizedPnl,
+      wins: closedTrades.filter((t) => t.outcome === "WIN").length,
+      losses: closedTrades.filter((t) => t.outcome === "LOSS").length,
+      execRate: allTrades.length > 0 ? executedAll.length / allTrades.length : 0,
+    },
+  };
+}
+
+function printSessionDashboard(d: SessionDashboard): void {
+  const sep = (label: string) =>
+    console.log(`\n── ${label} ${"─".repeat(Math.max(2, 58 - label.length))}`);
+
+  console.log(`\n[ops] Live session — ${d.date}  as-of ${d.asOf} IST`);
+
+  // ── Open positions ────────────────────────────────────────────────────────
+  sep(`OPEN POSITIONS (${d.openPositions.length})`);
+  if (d.openPositions.length === 0) {
+    console.log("  none");
+  } else {
+    console.log(`  ${col("Ticker", 14)}${col("Side", 6)}${col("Strategy", 30)}${col("Entry", 12)}${col("Time", 7)}${col("Qty", 6)}ATR`);
+    for (const p of d.openPositions) {
+      const atr = p.atrAtEntry !== undefined ? `₹${p.atrAtEntry.toFixed(2)}` : "n/a";
+      console.log(
+        `  ${col(p.ticker, 14)}${col(p.side, 6)}${col(p.strategy, 30)}` +
+        `${col(`₹${p.entryPrice.toFixed(2)}`, 12)}${col(p.entryTimeStr, 7)}${col(String(p.qty), 6)}${atr}`
+      );
+    }
+  }
+
+  // ── Closed trades ─────────────────────────────────────────────────────────
+  sep(`CLOSED TRADES (${d.closedTrades.length})`);
+  if (d.closedTrades.length === 0) {
+    console.log("  none yet");
+  } else {
+    console.log(`  ${col("Ticker", 14)}${col("Side", 6)}${col("Strategy", 30)}${col("Out", 8)}${col("PnL", 10)}Pct    Exit`);
+    for (const t of d.closedTrades) {
+      console.log(
+        `  ${col(t.ticker, 14)}${col(t.side, 6)}${col(t.strategy, 30)}` +
+        `${col(t.outcome, 8)}${col(fmtPnl(t.pnl), 10)}${col(fmtPct(t.pnlPct), 10)}${t.exitTimeStr}`
+      );
+    }
+  }
+
+  // ── Session totals ────────────────────────────────────────────────────────
+  sep("SESSION TOTALS");
+  const t = d.totals;
+  console.log(
+    `  Decisions: ${t.decisions}   Executed: ${t.executed}   Exec rate: ${(t.execRate * 100).toFixed(2)}%`
+  );
+  console.log(
+    `  Realized PnL: ${fmtPnl(t.realizedPnl)}   ` +
+    `Wins: ${t.wins}   Losses: ${t.losses}   Open: ${t.openCount}`
+  );
+
+  // ── Decision funnel by strategy ───────────────────────────────────────────
+  sep("DECISION FUNNEL BY STRATEGY");
+  if (d.strategyStats.length === 0) {
+    console.log("  no decisions yet");
+  } else {
+    console.log(
+      `  ${col("Strategy", 34)}${col("Total", 7)}${col("Exec", 6)}${col("RVeto", 7)}` +
+      `${col("JCool", 7)}${col("RCool", 7)}${col("L1Veto", 8)}${col("CFloor", 8)}${col("Deny", 6)}${col("W/L", 8)}PnL`
+    );
+    for (const s of d.strategyStats) {
+      const wl = s.executed > 0 ? `${s.wins}W/${s.losses}L` : "-";
+      const pnl = s.pnl !== 0 ? fmtPnl(s.pnl) : "-";
+      console.log(
+        `  ${col(s.strategy, 34)}${col(String(s.total), 7)}${col(String(s.executed), 6)}` +
+        `${col(String(s.riskVeto), 7)}${col(String(s.cooldownJudge), 7)}${col(String(s.cooldownRisk), 7)}` +
+        `${col(String(s.layer1Veto), 8)}${col(String(s.confFloor), 8)}${col(String(s.judgeDeny), 6)}` +
+        `${col(wl, 8)}${pnl}`
+      );
+    }
+  }
+
+  // ── Top block reasons ─────────────────────────────────────────────────────
+  sep("TOP BLOCK REASONS");
+  if (d.topBlockReasons.length === 0) {
+    console.log("  none (all decisions executed or no data)");
+  } else {
+    for (let i = 0; i < d.topBlockReasons.length; i++) {
+      const b = d.topBlockReasons[i]!;
+      const tickerStr = b.tickers.length > 0 ? `  [${b.tickers.join(", ")}]` : "";
+      console.log(`  ${String(i + 1).padStart(2)}.  ${String(b.count).padStart(4)}  ${b.reason}${tickerStr}`);
+    }
+  }
+
+  // ── Vol regime ────────────────────────────────────────────────────────────
+  sep("VOL REGIME (live candles)");
+  if (!env.volRegimeSwitchEnabled) {
+    console.log("  VOL_REGIME_SWITCH_ENABLED=false — gate is off, all strategies pass through");
+  } else {
+    console.log(
+      `  Switch: ON   LOW<${env.volRegimeLowMaxPct}%   HIGH>=${env.volRegimeHighMinPct}%   Lookback: ${env.volRegimeLookbackBars} bars`
+    );
+    console.log(
+      `  ${col("Ticker", 14)}${col("Regime", 8)}${col("Sigma", 8)}${col("Bars", 6)}${col("ORB", 6)}${col("VWAP", 6)}${col("MRev", 6)}Note`
+    );
+    for (const v of d.volRegimes) {
+      const sigmaStr = v.sigma !== undefined ? `${v.sigma.toFixed(3)}%` : "n/a";
+      const orb = v.orbAllowed ? "OK  " : "BLKD";
+      const vwap = v.vwapAllowed ? "OK  " : "BLKD";
+      const mrev = v.meanRevAllowed ? "OK  " : "BLKD";
+      const note =
+        !v.orbAllowed && !v.vwapAllowed ? " <- most strategies gated!" :
+        !v.orbAllowed ? " <- ORB/breakouts gated" :
+        !v.vwapAllowed ? " <- VWAP gated" :
+        !v.meanRevAllowed ? " <- mean-rev gated" : "";
+      console.log(
+        `  ${col(v.ticker, 14)}${col(v.regime, 8)}${col(sigmaStr, 8)}${col(String(v.bars), 6)}` +
+        `${col(orb, 6)}${col(vwap, 6)}${col(mrev, 6)}${note}`
+      );
+    }
+  }
+
+  // ── Strategy auto-gate ────────────────────────────────────────────────────
+  sep("STRATEGY AUTO-GATE");
+  if (d.strategyGate.length === 0) {
+    console.log("  no gate data yet (need STRATEGY_GATE_MIN_TRADES closed trades per strategy)");
+  } else {
+    console.log(
+      `  ${col("Strategy", 34)}${col("Status", 10)}${col("PF", 7)}${col("WR", 8)}${col("Trades", 8)}Reason`
+    );
+    for (const g of d.strategyGate) {
+      const status = g.allowed ? "ENABLED" : "DISABLED";
+      const pf = Number.isFinite(g.pf) && g.pf > 0 ? g.pf.toFixed(2) : "n/a";
+      const wr = Number.isFinite(g.wr) && g.wr > 0 ? `${(g.wr * 100).toFixed(0)}%` : "n/a";
+      const reason = !g.allowed && g.reason ? `  <- ${g.reason}` : "";
+      console.log(
+        `  ${col(g.strategy, 34)}${col(status, 10)}${col(pf, 7)}${col(wr, 8)}${col(String(g.trades), 8)}${reason}`
+      );
+    }
+  }
 }
 
 function printHelp(): void {
   console.log("\n[ops] quick examples:");
-  console.log("  1            # refresh status");
-  console.log("  2            # run suggested action (sentinel)");
-  console.log("  3            # judge cooldown status");
-  console.log("  4            # daemon control");
-  console.log("  5            # repair missing days (guided)");
-  console.log("  6            # change date context");
-  console.log("  8            # replay selected date");
-  console.log("  9            # replay custom range");
-  console.log("  12           # funnel optimizer (analyze/tune)");
-  console.log("  13           # phase8 validation (target checks)");
-  console.log("  14           # resolve Nifty-50 laggard heavyweights (dynamic) / show static list");
-  console.log("  replay       # same as replay selected date");
-  console.log("  range        # same as replay custom range");
-  console.log("  repair       # same as repair missing days");
-  console.log("  cooldown     # same as judge cooldown status");
-  console.log("  daemon       # same as daemon control");
-  console.log("  funnel       # same as funnel optimizer");
-  console.log("  phase8       # same as phase8 validation");
-  console.log("  heavyweights / hw  # NSE + Angel quotes (or static list if MODE=static)");
-  console.log("  date         # same as change date");
-  console.log("  sentinel     # same as option 2");
-  console.log("  help");
+  console.log("  1 / r        # refresh status");
+  console.log("  2 / sentinel # run suggested action (sentinel)");
+  console.log("  3 / live     # LIVE SESSION DASHBOARD — trades, funnel, vol regime, strategy gate");
+  console.log("  4 / cooldown # judge cooldown status");
+  console.log("  5 / daemon   # daemon control");
+  console.log("  6 / repair   # repair missing days (guided)");
+  console.log("  7 / date     # change date context");
+  console.log("  9 / replay   # replay selected date");
+  console.log("  10 / range   # replay custom range");
+  console.log("  13 / funnel  # funnel optimizer (analyze/tune)");
+  console.log("  14 / phase8  # phase8 validation (target checks)");
+  console.log("  15 / hw      # resolve Nifty-50 laggard heavyweights");
+  console.log("");
+  console.log("  Aliases: live | dash | session | monitor | ld  →  session dashboard");
+  console.log("  Aliases: cooldown | jc  →  judge cooldown");
+  console.log("  Aliases: replay | backtest | day  →  replay selected date");
+  console.log("  Aliases: range | replay-range  →  replay custom range");
+  console.log("  Aliases: repair | repair-missing  →  repair missing days");
+  console.log("  Aliases: funnel | tune | optimize  →  funnel optimizer");
+  console.log("  Aliases: phase8 | validate | kpi  →  phase8 validation");
+  console.log("  Aliases: heavyweights | hw  →  heavyweight resolver");
+  console.log("  help / h / ?  →  this message");
 }
 
 interface DaemonProc {
@@ -1456,6 +1904,11 @@ async function interactive(date: string): Promise<void> {
       if (action === "refresh") continue;
       if (action === "suggested") {
         await runSuggestedAction(rl, currentDate, status);
+        continue;
+      }
+      if (action === "session-dashboard") {
+        const dash = await loadSessionDashboard(currentDate);
+        printSessionDashboard(dash);
         continue;
       }
       if (action === "judge-cooldown") {

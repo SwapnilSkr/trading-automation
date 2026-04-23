@@ -42,6 +42,7 @@ const ALL_STRATEGIES: StrategyId[] = [
   "OPEN_DRIVE_PULLBACK",
   "ORB_FAKEOUT_REVERSAL",
   "INDEX_LAGGARD_CATCHUP",
+  "EMA_RIBBON_TREND",
 ];
 
 interface PerfMetrics {

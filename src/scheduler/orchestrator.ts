@@ -53,6 +53,7 @@ export class TradingOrchestrator {
     await ensureIndexes();
     console.log("[Orchestrator] indexes ensured");
     await this.engine.restoreOpenPositionsFromMongo();
+    await this.engine.restoreInMemoryCooldownsFromMongo();
   }
 
   async tick(): Promise<void> {

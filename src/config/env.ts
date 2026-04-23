@@ -238,6 +238,8 @@ export const env = {
   ),
   /** Retry cooldown for strategy:ticker pairs blocked by hard risk veto */
   riskVetoRetryCooldownMs: num("RISK_VETO_RETRY_COOLDOWN_MS", 60 * 1000),
+  /** After any position exit (stop, target, forced), block re-entry on that ticker for this long */
+  tickerReentryCooldownMs: num("TICKER_REENTRY_COOLDOWN_MS", 20 * 60 * 1000),
   /** If true, rank and cap candidate triggers per ticker before full decisioning */
   candidateQueueEnabled: bool("CANDIDATE_QUEUE_ENABLED", true),
   /** Max ranked triggers evaluated per ticker per scan pass */
@@ -483,6 +485,8 @@ export const env = {
     process.env.BACKTEST_ENABLE_OPEN_DRIVE_PULLBACK !== "false",
   backtestEnableOrbFakeoutReversal:
     process.env.BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL !== "false",
+  /** EMA9 vs EMA21 ribbon trend-pullback — fires more frequently than VWAP_PULLBACK_TREND */
+  backtestEnableEmaRibbonTrend: bool("BACKTEST_ENABLE_EMA_RIBBON_TREND", true),
   /** Nifty-50 overweight catch-up (heavyweights only) — needs NIFTY50 + 1m history in Mongo */
   backtestEnableIndexLaggardCatchup: bool(
     "BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP",
@@ -568,7 +572,7 @@ export const env = {
   /** Rolling trade window for strategy performance evaluation */
   strategyGateWindow: num("STRATEGY_GATE_WINDOW", 20),
   /** Minimum closed-trade sample before strategy auto-gate can disable */
-  strategyGateMinTrades: num("STRATEGY_GATE_MIN_TRADES", 40),
+  strategyGateMinTrades: num("STRATEGY_GATE_MIN_TRADES", 12),
   /** Minimum profit factor to keep strategy active (below this → disabled) */
   strategyGateMinPf: num("STRATEGY_GATE_MIN_PF", 0.8),
   /** Minimum win rate (0-1) to keep strategy active */

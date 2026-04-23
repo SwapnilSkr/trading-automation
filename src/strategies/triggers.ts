@@ -188,9 +188,10 @@ export function evaluateMeanReversion(
   const vz = volumeZScore(sessionCandles, 20);
   if (z === undefined || r === undefined) return undefined;
 
-  const overextended =
-    z > 2.5 && (rsiBearishDivergence(sessionCandles) || r > 70);
-  const oversold = z < -2.5 && (rsiBullishDivergence(sessionCandles) || r < 30);
+  // Lowered from 2.5 to 2.0: catches overextensions sooner.
+  // Removed divergence requirement — just use RSI extreme directly.
+  const overextended = z > 2.0 && r > 68;
+  const oversold = z < -2.0 && r < 32;
 
   if (!overextended && !oversold) return undefined;
 
@@ -204,8 +205,8 @@ export function evaluateMeanReversion(
       meanrev_signal: overextended ? -1 : 1,
     },
     hint: overextended
-      ? "Overextended vs VWAP (mean reversion short bias)"
-      : "Oversold vs VWAP (mean reversion long bias)",
+      ? `Overextended vs VWAP (z=${z.toFixed(2)}, RSI=${r.toFixed(0)}) — mean reversion short`
+      : `Oversold vs VWAP (z=${z.toFixed(2)}, RSI=${r.toFixed(0)}) — mean reversion long`,
   };
 }
 
@@ -665,8 +666,8 @@ export function evaluateOpenDrivePullback(
 
   if (
     driveUp &&
-    pullbackFromHighPct >= 0.2 &&
-    pullbackFromHighPct <= 0.9 &&
+    pullbackFromHighPct >= 0.15 &&
+    pullbackFromHighPct <= 1.2 &&
     bounce
   ) {
     return {
@@ -687,8 +688,8 @@ export function evaluateOpenDrivePullback(
 
   if (
     driveDown &&
-    pullbackFromLowPct >= 0.2 &&
-    pullbackFromLowPct <= 0.9 &&
+    pullbackFromLowPct >= 0.15 &&
+    pullbackFromLowPct <= 1.2 &&
     rejection
   ) {
     return {
@@ -834,4 +835,79 @@ export function evaluateIndexLaggardCatchup(
           ? "INDEX_LAGGARD: divergence + Nifty firm; session VWAP reclaim"
           : "INDEX_LAGGARD: divergence + Nifty firm; first break above 15m high",
   };
+}
+
+/**
+ * EMA ribbon trend-pullback.
+ * EMA9 > EMA21 = uptrend; EMA9 < EMA21 = downtrend.
+ * Entry when price pulls back to touch EMA9 and resumes in trend direction.
+ * Fires more frequently than VWAP_PULLBACK_TREND (no EMA50, only 40 bars needed).
+ */
+export function evaluateEmaRibbonTrend(
+  sessionCandles: Ohlc1m[],
+): TriggerHit | undefined {
+  if (sessionCandles.length < 40) return undefined;
+
+  const e9 = ema(sessionCandles, 9);
+  const e21 = ema(sessionCandles, 21);
+  if (e9 === undefined || e21 === undefined) return undefined;
+
+  const last = sessionCandles[sessionCandles.length - 1]!;
+  const prev = sessionCandles[sessionCandles.length - 2]!;
+  const vz = volumeZScore(sessionCandles, 20) ?? 0;
+
+  // Require meaningful separation — avoids choppy flat markets
+  const ribbonGap = Math.abs(e9 - e21) / last.c;
+  if (ribbonGap < 0.0012) return undefined;
+
+  const upTrend = e9 > e21;
+  const downTrend = e9 < e21;
+
+  // Long: previous bar touched/dipped to EMA9 zone, current bar closes above EMA9
+  const longSetup =
+    upTrend &&
+    prev.l <= e9 * 1.002 &&
+    last.c > e9 &&
+    last.c > prev.c &&
+    vz > -0.3;
+
+  if (longSetup) {
+    return {
+      strategy: "EMA_RIBBON_TREND",
+      side: "BUY",
+      snapshot: {
+        ema9: e9,
+        ema21: e21,
+        ribbon_gap_pct: ribbonGap * 100,
+        volume_z: vz,
+        last_close: last.c,
+      },
+      hint: `EMA9>EMA21 uptrend: pullback to EMA9 held — trend resumption (gap=${(ribbonGap * 100).toFixed(2)}%)`,
+    };
+  }
+
+  // Short: previous bar touched/spiked to EMA9 zone, current bar closes below EMA9
+  const shortSetup =
+    downTrend &&
+    prev.h >= e9 * 0.998 &&
+    last.c < e9 &&
+    last.c < prev.c &&
+    vz > -0.3;
+
+  if (shortSetup) {
+    return {
+      strategy: "EMA_RIBBON_TREND",
+      side: "SELL",
+      snapshot: {
+        ema9: e9,
+        ema21: e21,
+        ribbon_gap_pct: ribbonGap * 100,
+        volume_z: vz,
+        last_close: last.c,
+      },
+      hint: `EMA9<EMA21 downtrend: pullback to EMA9 failed — trend continuation (gap=${(ribbonGap * 100).toFixed(2)}%)`,
+    };
+  }
+
+  return undefined;
 }

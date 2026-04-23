@@ -15,7 +15,8 @@ export type StrategyId =
   | "INSIDE_BAR_BREAKOUT_WITH_RETEST"
   | "OPEN_DRIVE_PULLBACK"
   | "ORB_FAKEOUT_REVERSAL"
-  | "INDEX_LAGGARD_CATCHUP";
+  | "INDEX_LAGGARD_CATCHUP"
+  | "EMA_RIBBON_TREND";
 
 export type TradeOutcome = "WIN" | "LOSS" | "BREAKEVEN";
 

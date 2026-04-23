@@ -89,9 +89,13 @@ function parseJudgeText(text: string): JudgeResult {
 
   try {
     const raw = JSON.parse(jsonText) as Record<string, unknown>;
+    // Some models (e.g. glm-5) return confidence as 0-100 integer instead of 0-1 float.
+    // Normalise: if value is clearly on a 0-100 scale, divide by 100.
+    let conf = Number(raw.confidence ?? 0);
+    if (conf > 1 && conf <= 100) conf = conf / 100;
     return {
       approve: Boolean(raw.approve),
-      confidence: clamp01(Number(raw.confidence ?? 0)),
+      confidence: clamp01(conf),
       reasoning: String(raw.reasoning ?? ""),
     };
   } catch {
@@ -112,7 +116,8 @@ export async function callJudgeModel(
   const system = `You are a risk-aware intraday trading judge for Indian equities (NSE).
 Evaluate setup quality, risk/reward ratio, and market context alignment.
 Approve high-probability setups with favorable R:R. Deny weak setups, counter-trend trades in strong trends, or setups with negative catalyst risk.
-Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasoning":"string"}`;
+Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasoning":"string"}
+confidence must be a float 0.0–1.0 (NOT a percentage). Example: 0.72 means 72% confident.`;
 
   const sections: string[] = [
     `[SIGNAL]`,
@@ -180,7 +185,7 @@ Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasonin
             { role: "user", content: user },
           ],
           temperature: 0.2,
-          max_tokens: 600,
+          max_tokens: 1024,
           response_format: { type: "json_object" },
         }),
       });

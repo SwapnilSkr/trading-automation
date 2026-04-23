@@ -34,7 +34,8 @@ function windowFor(strategy: StrategyId): { start: string; end: string; label: s
     strategy === "VWAP_RECLAIM_REJECT" ||
     strategy === "VWAP_PULLBACK_TREND" ||
     strategy === "VWAP_RECLAIM_CONTINUATION" ||
-    strategy === "EMA20_BREAK_RETEST"
+    strategy === "EMA20_BREAK_RETEST" ||
+    strategy === "EMA_RIBBON_TREND"
   ) {
     return { start: env.vwapEntryStart, end: env.vwapEntryEnd, label: "VWAP/EMA" };
   }

@@ -33,6 +33,7 @@ import {
   evaluateOrb,
   evaluateOrbFakeoutReversal,
   evaluateIndexLaggardCatchup,
+  evaluateEmaRibbonTrend,
   evaluateOrbRetest15m,
   evaluatePrevDayBreakRetest,
   evaluateVolatilityContractionBreakout,
@@ -149,6 +150,8 @@ export class ExecutionEngine {
   private lastJudgeByStrategyTicker = new Map<string, number>();
   /** Live: last hard risk veto time for this strategy:ticker */
   private lastRiskVetoByStrategyTicker = new Map<string, number>();
+  /** Live: timestamp of last position exit per ticker — prevents immediate re-entry after stop-out */
+  private lastExitByTicker = new Map<string, number>();
   /** Live paper positions tracked for stop/target management */
   private livePositions = new Map<string, LivePosition>();
   /** Rolling strategy performance (loaded once per session start) */
@@ -404,6 +407,84 @@ export class ExecutionEngine {
   }
 
   /**
+   * Rebuild in-memory cooldown maps from recent trade history after a restart.
+   * Prevents re-entry on tickers that were stopped out right before the restart,
+   * and skips redundant judge calls for strategy:ticker pairs entered very recently.
+   * Call from orchestrator.startup() after restoreOpenPositionsFromMongo().
+   */
+  async restoreInMemoryCooldownsFromMongo(): Promise<void> {
+    const nowMs = Date.now();
+    // Look back far enough to cover the longest cooldown window we care about.
+    const lookbackMs = Math.max(
+      env.tickerReentryCooldownMs,
+      env.adaptiveJudgeCooldownEnabled ? env.adaptiveJudgeCooldownMaxMs : env.judgeCooldownMs
+    );
+    const since = new Date(nowMs - lookbackMs);
+
+    let trades: TradeLogDoc[];
+    try {
+      trades = await fetchExecutedTradesSince(since, env.executionEnv);
+    } catch {
+      // Non-fatal: cooldowns will simply reset after restart
+      return;
+    }
+
+    let exitRestored = 0;
+    let judgeRestored = 0;
+
+    const judgeCooldownMs = env.adaptiveJudgeCooldownEnabled
+      ? env.adaptiveJudgeCooldownMaxMs
+      : env.judgeCooldownMs;
+
+    for (const t of trades) {
+      // Re-entry cooldown: restore from the most recent exit_time per ticker
+      if (t.exit_time instanceof Date) {
+        const exitMs = t.exit_time.getTime();
+        if (nowMs - exitMs < env.tickerReentryCooldownMs) {
+          const prev = this.lastExitByTicker.get(t.ticker) ?? 0;
+          if (exitMs > prev) {
+            this.lastExitByTicker.set(t.ticker, exitMs);
+            exitRestored++;
+          }
+        }
+      }
+
+      // Judge cooldown: closed trades with a recent entry_time means we called the judge
+      if (t.entry_time instanceof Date) {
+        const entryMs = t.entry_time.getTime();
+        if (nowMs - entryMs < judgeCooldownMs) {
+          const key = `${t.strategy}:${t.ticker}`;
+          const prev = this.lastJudgeByStrategyTicker.get(key) ?? 0;
+          if (entryMs > prev) {
+            this.lastJudgeByStrategyTicker.set(key, entryMs);
+            judgeRestored++;
+          }
+        }
+      }
+    }
+
+    // Also seed judge cooldown from open positions already restored into livePositions
+    // (fetchExecutedTradesSince only returns closed trades)
+    for (const pos of this.livePositions.values()) {
+      const entryMs = pos.entryTime.getTime();
+      if (nowMs - entryMs < judgeCooldownMs) {
+        const key = `${pos.strategy}:${pos.ticker}`;
+        const prev = this.lastJudgeByStrategyTicker.get(key) ?? 0;
+        if (entryMs > prev) {
+          this.lastJudgeByStrategyTicker.set(key, entryMs);
+          judgeRestored++;
+        }
+      }
+    }
+
+    if (exitRestored > 0 || judgeRestored > 0) {
+      console.log(
+        `[Execution] restored cooldowns from Mongo: ${exitRestored} ticker re-entry, ${judgeRestored} judge`
+      );
+    }
+  }
+
+  /**
    * Call on each EXECUTION tick BEFORE runScanningPass.
    * Checks open paper positions against stop/target using latest candle.
    * Closes positions that hit their levels via broker.closeIntraday.
@@ -440,6 +521,9 @@ export class ExecutionEngine {
 
     let shouldExit = false;
     let exitReason = "";
+    // Exit price: use the stop/target level that was hit, not bar close.
+    // This avoids both over- and under-estimating PnL when price blows through a level mid-bar.
+    let exitPrice = bar.c;
 
     if (pos.side === "BUY") {
       const stopPrice = pos.entryPrice - stopDist;
@@ -448,8 +532,16 @@ export class ExecutionEngine {
       const trailStop = trailActive ? pos.peakPrice - trailDistAbs : 0;
       const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
 
-      if (bar.c >= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
-      else if (bar.c <= effectiveStop) { shouldExit = true; exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`; }
+      // Use bar.h/bar.l — catches intrabar stop/target hits that bar.c misses entirely
+      if (bar.h >= targetPrice) {
+        shouldExit = true;
+        exitPrice = targetPrice;
+        exitReason = `target hit (${targetPrice.toFixed(2)})`;
+      } else if (bar.l <= effectiveStop) {
+        shouldExit = true;
+        exitPrice = effectiveStop;
+        exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`;
+      }
     } else {
       const stopPrice = pos.entryPrice + stopDist;
       const targetPrice = pos.entryPrice - targetDist;
@@ -457,16 +549,24 @@ export class ExecutionEngine {
       const trailStop = trailActive ? pos.peakPrice + trailDistAbs : Infinity;
       const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
 
-      if (bar.c <= targetPrice) { shouldExit = true; exitReason = `target hit (${targetPrice.toFixed(2)})`; }
-      else if (bar.c >= effectiveStop) { shouldExit = true; exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`; }
+      if (bar.l <= targetPrice) {
+        shouldExit = true;
+        exitPrice = targetPrice;
+        exitReason = `target hit (${targetPrice.toFixed(2)})`;
+      } else if (bar.h >= effectiveStop) {
+        shouldExit = true;
+        exitPrice = effectiveStop;
+        exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`;
+      }
     }
 
     if (shouldExit) {
-      console.log(`[Exit] ${ticker} ${pos.side} — ${exitReason} @ ${bar.c}`);
+      console.log(`[Exit] ${ticker} ${pos.side} — ${exitReason} @ ${exitPrice.toFixed(2)}`);
       await this.broker.closeIntraday(ticker);
       this.livePositions.delete(ticker);
       this.openCount = Math.max(0, this.openCount - 1);
-      const result = this.liveResultFromExit(pos, bar.c);
+      this.lastExitByTicker.set(ticker, Date.now());
+      const result = this.liveResultFromExit(pos, exitPrice);
       const pnl = result.pnl;
       this.recordPnl(pnl);
       if (pos.tradeId) {
@@ -493,7 +593,7 @@ export class ExecutionEngine {
         pos.atrAtEntry,
         step.atrMultiple
       );
-      if (!partialTargetHit(pos.side, bar.c, bar.c, target)) continue;
+      if (!partialTargetHit(pos.side, bar.h, bar.l, target)) continue;
       const qty = plannedPartialQty(pos.qty, pos.remainingQty, step.qtyPct);
       if (qty <= 0) {
         pos.completedPartialReasons.push(step.reason);
@@ -540,6 +640,7 @@ export class ExecutionEngine {
     if (!pos) return;
     this.livePositions.delete(ticker);
     this.openCount = Math.max(0, this.openCount - 1);
+    this.lastExitByTicker.set(ticker, Date.now());
     const result = this.liveResultFromExit(pos, exitPrice);
     this.recordPnl(result.pnl);
     if (pos.tradeId) {
@@ -577,6 +678,7 @@ export class ExecutionEngine {
         .filter((r): r is PartialExitReason => r === "SCALE_1" || r === "SCALE_2"),
       atrAtEntry: t.atr_at_entry,
     };
+    this.lastExitByTicker.set(ticker, Date.now());
     const result = this.liveResultFromExit(pos, exitPrice);
     this.recordPnl(result.pnl);
     await updateTradeExit(t._id, {
@@ -609,6 +711,20 @@ export class ExecutionEngine {
 
     const { ticker, sessionCandles, last5m, niftyTrendHint, newsHeadlines, marketSnapshot } =
       args;
+
+    // Ticker re-entry cooldown: block new entries on a ticker recently exited (stop-out or replace)
+    if (!backtest && env.tickerReentryCooldownMs > 0) {
+      const lastExitMs = this.lastExitByTicker.get(ticker) ?? 0;
+      const elapsedMs = Date.now() - lastExitMs;
+      if (elapsedMs < env.tickerReentryCooldownMs) {
+        if (env.liveDebugScans) {
+          const remainingSec = Math.ceil((env.tickerReentryCooldownMs - elapsedMs) / 1000);
+          console.log(`[Scan] ${ticker} skipped: re-entry cooldown active (${remainingSec}s remaining)`);
+        }
+        return;
+      }
+    }
+
     if (sessionCandles.length < 30) {
       if (!backtest && env.liveDebugScans) {
         console.log(
@@ -670,6 +786,10 @@ export class ExecutionEngine {
     if (env.backtestEnableOrbFakeoutReversal) {
       const ofr = evaluateOrbFakeoutReversal(sessionCandles);
       if (ofr) triggers.push(ofr);
+    }
+    if (env.backtestEnableEmaRibbonTrend) {
+      const ert = evaluateEmaRibbonTrend(sessionCandles);
+      if (ert) triggers.push(ert);
     }
 
     if (
@@ -1317,6 +1437,7 @@ export class ExecutionEngine {
     await this.broker.closeIntraday(weakest.ticker);
     this.livePositions.delete(weakest.ticker);
     this.openCount = Math.max(0, this.openCount - 1);
+    this.lastExitByTicker.set(weakest.ticker, Date.now());
     const result = this.liveResultFromExit(weakest.pos, last.c);
     this.recordPnl(result.pnl);
     if (weakest.pos.tradeId) {
@@ -1468,6 +1589,14 @@ function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
       : regime === "MID"
         ? env.volRegimeOrbMid
         : env.volRegimeOrbHigh;
+  }
+  if (strategy === "EMA_RIBBON_TREND") {
+    // VWAP-like: works in LOW-MID (trending), blocked in HIGH (choppy)
+    return regime === "LOW"
+      ? env.volRegimeVwapLow
+      : regime === "MID"
+        ? env.volRegimeVwapMid
+        : env.volRegimeVwapHigh;
   }
   if (strategy === "MEAN_REV_Z" || strategy === "ORB_FAKEOUT_REVERSAL") {
     return regime === "LOW"
