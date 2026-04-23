@@ -487,6 +487,18 @@ export const env = {
     process.env.BACKTEST_ENABLE_ORB_FAKEOUT_REVERSAL !== "false",
   /** EMA9 vs EMA21 ribbon trend-pullback — fires more frequently than VWAP_PULLBACK_TREND */
   backtestEnableEmaRibbonTrend: bool("BACKTEST_ENABLE_EMA_RIBBON_TREND", true),
+  /** Large momentum candle with volume surge — works across all vol regimes */
+  backtestEnableCandleMomentumSurge: bool("BACKTEST_ENABLE_CANDLE_MOMENTUM_SURGE", true),
+  /** Bull/bear flag breakout — tight consolidation after strong move then breakout */
+  backtestEnableTrendFlagBreakout: bool("BACKTEST_ENABLE_TREND_FLAG_BREAKOUT", true),
+  /** Confirmed VWAP reversal — waits for reversal bar after overextension (higher accuracy than MEAN_REV_Z) */
+  backtestEnableVwapReversalConfirmation: bool("BACKTEST_ENABLE_VWAP_REVERSAL_CONFIRMATION", true),
+  /** 5-minute ORB break (9:15–9:19 range) — tighter levels, fires earlier than ORB_15M */
+  backtestEnableFiveMinOrbBreak: bool("BACKTEST_ENABLE_FIVE_MIN_ORB_BREAK", true),
+  /** New session high/low with volume — pure momentum, no vol-regime gate */
+  backtestEnableSessionHighLowBreak: bool("BACKTEST_ENABLE_SESSION_HIGH_LOW_BREAK", true),
+  /** Engulfing candle with volume confirmation — price action signal, all regimes */
+  backtestEnableEngulfingWithVolume: bool("BACKTEST_ENABLE_ENGULFING_WITH_VOLUME", true),
   /** Nifty-50 overweight catch-up (heavyweights only) — needs NIFTY50 + 1m history in Mongo */
   backtestEnableIndexLaggardCatchup: bool(
     "BACKTEST_ENABLE_INDEX_LAGGARD_CATCHUP",

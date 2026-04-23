@@ -26,7 +26,8 @@ function windowFor(strategy: StrategyId): { start: string; end: string; label: s
     strategy === "ORB_RETEST_15M" ||
     strategy === "INITIAL_BALANCE_BREAK_RETEST" ||
     strategy === "ORB_FAKEOUT_REVERSAL" ||
-    strategy === "INDEX_LAGGARD_CATCHUP"
+    strategy === "INDEX_LAGGARD_CATCHUP" ||
+    strategy === "FIVE_MIN_ORB_BREAK"
   ) {
     return { start: env.orbEntryStart, end: env.orbEntryEnd, label: "ORB" };
   }
@@ -39,7 +40,7 @@ function windowFor(strategy: StrategyId): { start: string; end: string; label: s
   ) {
     return { start: env.vwapEntryStart, end: env.vwapEntryEnd, label: "VWAP/EMA" };
   }
-  if (strategy === "MEAN_REV_Z") {
+  if (strategy === "MEAN_REV_Z" || strategy === "VWAP_REVERSAL_CONFIRMATION") {
     return { start: env.meanRevEntryStart, end: env.meanRevEntryEnd, label: "MEAN_REV" };
   }
   return { start: env.defaultEntryStart, end: env.defaultEntryEnd, label: "DEFAULT" };

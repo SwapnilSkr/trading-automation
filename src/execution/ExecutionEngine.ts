@@ -34,6 +34,12 @@ import {
   evaluateOrbFakeoutReversal,
   evaluateIndexLaggardCatchup,
   evaluateEmaRibbonTrend,
+  evaluateCandleMomentumSurge,
+  evaluateTrendFlagBreakout,
+  evaluateVwapReversalConfirmation,
+  evaluateFiveMinOrbBreak,
+  evaluateSessionHighLowBreak,
+  evaluateEngulfingWithVolume,
   evaluateOrbRetest15m,
   evaluatePrevDayBreakRetest,
   evaluateVolatilityContractionBreakout,
@@ -790,6 +796,30 @@ export class ExecutionEngine {
     if (env.backtestEnableEmaRibbonTrend) {
       const ert = evaluateEmaRibbonTrend(sessionCandles);
       if (ert) triggers.push(ert);
+    }
+    if (env.backtestEnableCandleMomentumSurge) {
+      const cms = evaluateCandleMomentumSurge(sessionCandles);
+      if (cms) triggers.push(cms);
+    }
+    if (env.backtestEnableTrendFlagBreakout) {
+      const tfb = evaluateTrendFlagBreakout(sessionCandles);
+      if (tfb) triggers.push(tfb);
+    }
+    if (env.backtestEnableVwapReversalConfirmation) {
+      const vrc = evaluateVwapReversalConfirmation(sessionCandles);
+      if (vrc) triggers.push(vrc);
+    }
+    if (env.backtestEnableFiveMinOrbBreak) {
+      const fmob = evaluateFiveMinOrbBreak(sessionCandles);
+      if (fmob) triggers.push(fmob);
+    }
+    if (env.backtestEnableSessionHighLowBreak) {
+      const shlb = evaluateSessionHighLowBreak(sessionCandles);
+      if (shlb) triggers.push(shlb);
+    }
+    if (env.backtestEnableEngulfingWithVolume) {
+      const ewv = evaluateEngulfingWithVolume(sessionCandles);
+      if (ewv) triggers.push(ewv);
     }
 
     if (
@@ -1597,6 +1627,23 @@ function allowedInRegime(strategy: StrategyId, regime: VolRegime): boolean {
       : regime === "MID"
         ? env.volRegimeVwapMid
         : env.volRegimeVwapHigh;
+  }
+  if (
+    strategy === "CANDLE_MOMENTUM_SURGE" ||
+    strategy === "TREND_FLAG_BREAKOUT" ||
+    strategy === "VWAP_REVERSAL_CONFIRMATION" ||
+    strategy === "FIVE_MIN_ORB_BREAK" ||
+    strategy === "SESSION_HIGH_LOW_BREAK" ||
+    strategy === "ENGULFING_WITH_VOLUME"
+  ) {
+    // Signal conditions are self-filtering across all vol regimes:
+    // - CANDLE_MOMENTUM_SURGE: big bar + volume surge requirement works/scales in any regime
+    // - TREND_FLAG_BREAKOUT: tight flag (< 0.45%) won't form in HIGH vol — naturally excludes itself
+    // - VWAP_REVERSAL_CONFIRMATION: overextension (z > 2.0) rare in LOW vol — self-excludes
+    // - FIVE_MIN_ORB_BREAK: opening 5m range is always defined; vz > 0.5 filters low-activity setups
+    // - SESSION_HIGH_LOW_BREAK: uses session's own extremes + vz > 1.0 — self-regulates
+    // - ENGULFING_WITH_VOLUME: body-size + vz > 0.8 acts as natural high-vol filter
+    return true;
   }
   if (strategy === "MEAN_REV_Z" || strategy === "ORB_FAKEOUT_REVERSAL") {
     return regime === "LOW"
