@@ -35,8 +35,12 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
+function stripBom(s: string): string {
+  return s.replace(/^\uFEFF/, "");
+}
+
 function extractJsonObject(text: string): string | undefined {
-  const trimmed = text.trim();
+  const trimmed = stripBom(text).trim();
   if (!trimmed) return undefined;
 
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
@@ -77,9 +81,66 @@ function extractJsonObject(text: string): string | undefined {
   return undefined;
 }
 
-function parseJudgeText(text: string): JudgeResult {
-  const jsonText = extractJsonObject(text);
-  if (!jsonText) {
+/** Parse JSON; on failure retry with trailing commas stripped (common LLM mistake). */
+function parseJsonObjectLenient(jsonText: string): Record<string, unknown> | null {
+  const tryOnce = (s: string): Record<string, unknown> | null => {
+    try {
+      const v = JSON.parse(s);
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        return v as Record<string, unknown>;
+      }
+    } catch {
+      /* */
+    }
+    return null;
+  };
+  const direct = tryOnce(jsonText);
+  if (direct) return direct;
+  const noTrailing = jsonText.replace(/,\s*([}\]])/g, "$1");
+  return tryOnce(noTrailing);
+}
+
+/**
+ * Models (e.g. z-ai/glm-5) sometimes return the judge payload as a JSON *string* whose
+ * value is another JSON object, or mix markdown / wrappers. Peel layers until we get an object.
+ */
+function tryParseJudgeObject(text: string, depth = 0): Record<string, unknown> | null {
+  if (depth > 8) return null;
+  const s = stripBom(text).trim();
+  if (!s) return null;
+
+  const extracted = extractJsonObject(s);
+  if (extracted) {
+    const obj = parseJsonObjectLenient(extracted);
+    if (obj) return obj;
+    try {
+      const v = JSON.parse(extracted);
+      if (typeof v === "string") {
+        return tryParseJudgeObject(v, depth + 1);
+      }
+    } catch {
+      /* */
+    }
+  }
+
+  try {
+    const top = JSON.parse(s);
+    if (typeof top === "string") {
+      return tryParseJudgeObject(top, depth + 1);
+    }
+    if (top && typeof top === "object" && !Array.isArray(top)) {
+      return top as Record<string, unknown>;
+    }
+  } catch {
+    /* */
+  }
+
+  return null;
+}
+
+export function parseJudgeText(text: string): JudgeResult {
+  const raw = tryParseJudgeObject(text);
+  if (!raw) {
     return {
       approve: false,
       confidence: 0,
@@ -88,7 +149,6 @@ function parseJudgeText(text: string): JudgeResult {
   }
 
   try {
-    const raw = JSON.parse(jsonText) as Record<string, unknown>;
     // Some models (e.g. glm-5) return confidence as 0-100 integer instead of 0-1 float.
     // Normalise: if value is clearly on a 0-100 scale, divide by 100.
     let conf = Number(raw.confidence ?? 0);
