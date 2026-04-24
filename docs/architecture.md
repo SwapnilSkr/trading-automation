@@ -236,6 +236,7 @@ src/
 │
 ├── cli/
 │   ├── sync-history.ts          # CLI entry for OHLC backfill
+│   ├── backtest-data-audit.ts   # CLI: Mongo ohlc_1m + watchlist_snapshots coverage for a range
 │   ├── discovery-sync.ts        # CLI entry for discovery
 │   ├── backtest.ts              # CLI entry for backtest
 │   ├── backtest-analyze.ts      # CLI entry for result analysis

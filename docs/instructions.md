@@ -211,6 +211,16 @@ bun run sync-history -- --from YYYY-MM-DD --to YYYY-MM-DD --tickers RELIANCE,TCS
 
 Prefer `bun run ops` for day repair because it chooses the right snapshot tickers and session window.
 
+## Check backtest data coverage (Mongo)
+
+Before a long `backtest-snapshots` run, confirm `ohlc_1m` has full coverage for every ticker in `watchlist_snapshots` for that range:
+
+```bash
+bun run backtest-data-audit -- --from YYYY-MM-DD --to YYYY-MM-DD
+```
+
+If the report lists tickers under **need sync**, run `sync-history` for those names (see README **sync-history flags**), then re-run the audit. Omit `--from`/`--to` to scan roughly the last 45 calendar days.
+
 ## Backtest Manually
 
 ```bash

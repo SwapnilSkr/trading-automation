@@ -24,7 +24,11 @@ bun run backfill-news-scraper -- --from YYYY-MM-DD --to YYYY-MM-DD --output-arch
 ```bash
 bun run weekend-optimize
 ```
-5. Validate:
+5. Confirm Mongo has enough 1m bars for the replay window (optional but recommended):
+```bash
+bun run backtest-data-audit -- --from YYYY-MM-DD --to YYYY-MM-DD
+```
+6. Validate:
 ```bash
 bun run backtest -- --from YYYY-MM-DD --to YYYY-MM-DD --watchlist-snapshots
 bun run backtest-analyze -- --last
@@ -110,6 +114,12 @@ Expect: 30 min to several hours depending on how many tickers and candles are in
 ---
 
 ### Phase 3 — Backtest and analyze
+
+**Check coverage first (avoids a long replay on partial OHLC):**
+```bash
+bun run backtest-data-audit -- --from 2026-03-01 --to 2026-04-17
+```
+Re-run `sync-history` for any **need sync** tickers the audit prints, then audit again until the verdict is **likely OK** for your range.
 
 **Run the backtest:**
 ```bash

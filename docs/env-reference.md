@@ -25,6 +25,8 @@ If in doubt, keep defaults and run in paper mode.
 | `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Local or Atlas connection string |
 | `MONGODB_DB` | `trading-automation` | Database name |
 
+**Data coverage (CLI, not env):** Before a long `backtest-snapshots` run over `watchlist_snapshots`, use `bun run backtest-data-audit -- --from YYYY-MM-DD --to YYYY-MM-DD` to see whether `ohlc_1m` is complete for every snapshot ticker in that range (and which symbols still need `sync-history`).
+
 ---
 
 ## Pinecone (pattern memory)

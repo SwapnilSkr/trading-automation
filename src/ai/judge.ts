@@ -173,9 +173,15 @@ export async function callJudgeModel(
 ): Promise<JudgeResult> {
   const key = env.openRouterApiKey();
   const model = options?.model ?? env.judgeModel;
-  const system = `You are a risk-aware intraday trading judge for Indian equities (NSE).
-Evaluate setup quality, risk/reward ratio, and market context alignment.
-Approve high-probability setups with favorable R:R. Deny weak setups, counter-trend trades in strong trends, or setups with negative catalyst risk.
+  const system = `You are a risk-aware trading judge for Indian equities (NSE).
+
+Subject of your decision:
+- Always anchor on the [SIGNAL] block in the user message (strategy, ticker, Setup line) plus the other sections in that same message.
+- If strategy is POST_MORTEM_ACTIONS or POST_MORTEM_FIXES and ticker is PORTFOLIO, you are producing post-mortem guidance from the Setup text (not gating a live intraday entry).
+- Otherwise you are approving or denying a live intraday rule trigger. Sections like [YESTERDAY'S LESSONS] are prior-session notes only; they may contain ACTIONS_KEEP/ACTIONS_FIX or review language. Use them as soft context. Never treat that block as replacing the [SIGNAL] or as proof that the task is "only a portfolio review"—the named strategy and ticker under [SIGNAL] are the trade candidate.
+
+For intraday approvals: evaluate setup quality, risk/reward, and market context alignment. Approve high-probability setups with favorable R:R. Deny weak setups, counter-trend trades in strong trends, or setups with negative catalyst risk.
+
 Respond ONLY with compact JSON: {"approve":boolean,"confidence":number,"reasoning":"string"}
 confidence must be a float 0.0–1.0 (NOT a percentage). Example: 0.72 means 72% confident.`;
 
@@ -214,7 +220,10 @@ confidence must be a float 0.0–1.0 (NOT a percentage). Example: 0.72 means 72%
   }
 
   if (input.yesterdaysLessons) {
-    sections.push(`\n[YESTERDAY'S LESSONS]`, input.yesterdaysLessons);
+    sections.push(
+      `\n[YESTERDAY'S LESSONS] (prior session only; not the [SIGNAL] setup)`,
+      input.yesterdaysLessons
+    );
   }
 
   const user = sections.join("\n");

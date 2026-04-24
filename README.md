@@ -213,6 +213,7 @@ curl http://127.0.0.1:3000/health
 | `bun run typecheck` | TypeScript type check (no emit) |
 | `bun run build` | Bundle all entry points to `dist/` for PM2 |
 | `bun run sync-history` | Backfill 1m OHLC from Angel for specific tickers/days |
+| `bun run backtest-data-audit` | Report Mongo `ohlc_1m` + `watchlist_snapshots` coverage for a date range (readiness for `backtest-snapshots`) |
 | `bun run discovery-sync` | Score Nifty 100, write top-N to active_watchlist + OHLC |
 | `bun run backfill-news` | Manually seed news_context rows (edit the script for dates) |
 | `bun run backfill-news-scraper` | Scrape ET archive headlines into news_context |
@@ -237,6 +238,13 @@ bun run sync-history -- --days 30               # backfill all WATCHED_TICKERS
 bun run sync-history -- --days 30 --ticker NIFTY50
 bun run sync-history -- --from 2026-01-01 --to 2026-03-31 --ticker RELIANCE
 ```
+
+### backtest-data-audit flags
+```bash
+bun run backtest-data-audit -- --from 2026-04-01 --to 2026-04-23   # snapshot tickers + OHLC gaps for range
+bun run backtest-data-audit --                                   # last ~45 IST calendar days
+```
+Prints: global `ohlc_1m` bounds, `watchlist_snapshots` in range, per-ticker coverage vs the union of session days, tickers that still need `sync-history`, and thin sessions (under 200 1m bars). Run after backfill to confirm a window is ready for `bun run backtest-snapshots -- …`.
 
 ### discovery-sync flags
 ```bash
