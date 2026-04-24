@@ -156,6 +156,7 @@ If no API key: judge always returns `approve=false` (no trades fire).
 | `ANGEL_EXCHANGE` | `NSE` | Exchange |
 | `ANGEL_API_THROTTLE_MS` | `450` | Delay between getCandleData chunk requests |
 | `ANGEL_SYNC_TICKER_GAP_MS` | `800` | Extra pause between tickers in sync-history |
+| `ANGEL_GET_CANDLE_CHUNK_MAX_ATTEMPTS` | `2000` | Per day-chunk retries when getCandleData returns `status: false` (e.g. “Too many requests”); on exhaustion **throws** so sync does not skip chunks silently |
 | `QUOTE_BATCH_DELAY_MS` | `1100` | Delay between quote batches (≤50 symbols each) |
 | `ANGEL_HTTP_MIN_GAP_MS` | `0` | Shared in-process minimum gap between any SmartAPI calls (set this first before increasing fixed sleeps) |
 | `ANGEL_HTTP_MAX_CONCURRENCY` | `1` | Shared in-process SmartAPI concurrency cap |

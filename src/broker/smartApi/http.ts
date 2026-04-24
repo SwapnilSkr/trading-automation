@@ -31,6 +31,31 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * When Angel returns 403/429 (rate limit) the body is sometimes plain text, not JSON.
+ * Throwing here bypasses getCandleData chunk-level retries. Return `status: false` instead.
+ */
+function smartApiJsonFromResponse(res: Response, text: string): SmartApiJson {
+  try {
+    return JSON.parse(text) as SmartApiJson;
+  } catch {
+    const st = res.status;
+    const retriable =
+      st === 403 ||
+      st === 429 ||
+      st === 408 ||
+      (st >= 500 && st <= 504);
+    if (retriable) {
+      const msg = text.replace(/\s+/g, " ").trim().slice(0, 400);
+      return {
+        status: false,
+        message: `HTTP ${st}${msg ? `: ${msg}` : ""}`,
+      };
+    }
+    throw new Error(`SmartAPI non-JSON (${st}): ${text.slice(0, 200)}`);
+  }
+}
+
 export class SmartApiHttp {
   constructor(
     private readonly apiKey: string,
@@ -106,13 +131,7 @@ export class SmartApiHttp {
       body: JSON.stringify(body),
     });
     const text = await res.text();
-    let json: SmartApiJson;
-    try {
-      json = JSON.parse(text) as SmartApiJson;
-    } catch {
-      throw new Error(`SmartAPI non-JSON (${res.status}): ${text.slice(0, 200)}`);
-    }
-    return json;
+    return smartApiJsonFromResponse(res, text);
   }
 
   async get(path: string, accessToken: string | null): Promise<SmartApiJson> {
@@ -128,12 +147,6 @@ export class SmartApiHttp {
       headers: this.baseHeaders(accessToken),
     });
     const text = await res.text();
-    let json: SmartApiJson;
-    try {
-      json = JSON.parse(text) as SmartApiJson;
-    } catch {
-      throw new Error(`SmartAPI non-JSON (${res.status}): ${text.slice(0, 200)}`);
-    }
-    return json;
+    return smartApiJsonFromResponse(res, text);
   }
 }

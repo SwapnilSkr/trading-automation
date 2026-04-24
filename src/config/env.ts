@@ -170,6 +170,11 @@ export const env = {
   angelApiThrottleMs: num("ANGEL_API_THROTTLE_MS", 450),
   /** Extra pause between tickers during `sync-history` */
   angelSyncTickerGapMs: num("ANGEL_SYNC_TICKER_GAP_MS", 800),
+  /**
+   * Per day-chunk: retries when getCandleData returns `status: false` (e.g. "Too many requests")
+   * or empty failure — does not advance until success or this cap (then throws).
+   */
+  angelGetCandleChunkMaxAttempts: num("ANGEL_GET_CANDLE_CHUNK_MAX_ATTEMPTS", 2000),
 
   /** Pause between Angel `/quote` batches (≤50 symbols each, ~1 rps) */
   quoteBatchDelayMs: num("QUOTE_BATCH_DELAY_MS", 1100),

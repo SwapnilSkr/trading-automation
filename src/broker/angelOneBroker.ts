@@ -9,8 +9,13 @@ import type {
 import { SmartApiPaths } from "./smartApi/endpoints.js";
 import { SmartApiHttp, decodeJwtExpMs, type SmartApiJson } from "./smartApi/http.js";
 import { generateTotpCode } from "./smartApi/totp.js";
+import { retryJitterMs } from "./smartApi/rateLimiter.js";
 import { lookupEquityFromScripMaster } from "./scripMaster.js";
 import { IST } from "../time/ist.js";
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 interface LoginData {
   jwtToken?: string;
@@ -155,6 +160,8 @@ export class AngelOneBroker implements BrokerClient {
     const end = DateTime.fromJSDate(to, { zone }).endOf("minute");
     const all: Ohlc1m[] = [];
 
+    const maxChunkAttempts = Math.max(1, env.angelGetCandleChunkMaxAttempts);
+
     while (cursor <= end) {
       const chunkEnd = DateTime.min(
         cursor.plus({ days: 1 }).startOf("day").minus({ minutes: 1 }),
@@ -163,28 +170,50 @@ export class AngelOneBroker implements BrokerClient {
       const fromStr = cursor.toFormat("yyyy-MM-dd HH:mm");
       const toStr = chunkEnd.toFormat("yyyy-MM-dd HH:mm");
 
-      const res = await this.http.post(
-        SmartApiPaths.getCandleData,
-        {
-          exchange: env.angelExchange,
-          symboltoken,
-          interval: "ONE_MINUTE",
-          fromdate: fromStr,
-          todate: toStr,
-        },
-        token
-      );
+      let payload: Ohlc1m[] | null = null;
+      let lastFailMsg = "";
+      for (let attempt = 0; attempt < maxChunkAttempts; attempt++) {
+        const res: SmartApiJson = await this.http.post(
+          SmartApiPaths.getCandleData,
+          {
+            exchange: env.angelExchange,
+            symboltoken,
+            interval: "ONE_MINUTE",
+            fromdate: fromStr,
+            todate: toStr,
+          },
+          token
+        );
 
-      if (res.status !== true) {
-        const msg =
+        if (res.status === true) {
+          payload = parseCandlePayload(res.data, ticker, tradingsymbol);
+          break;
+        }
+
+        lastFailMsg =
           typeof res.message === "string" ? res.message : JSON.stringify(res);
-        console.warn(`[Angel] getCandleData ${fromStr}–${toStr}: ${msg}`);
-      } else {
-        all.push(...parseCandlePayload(res.data, ticker, tradingsymbol));
+        if (attempt === 0 || (attempt + 1) % 5 === 0) {
+          console.warn(
+            `[Angel] getCandleData ${ticker} ${fromStr}–${toStr} attempt ${attempt + 1}/${maxChunkAttempts}: ${lastFailMsg}`
+          );
+        }
+        const base = Math.max(1, env.angelHttp403RetryBaseMs);
+        const delay = Math.min(
+          env.angelHttpMaxBackoffMs,
+          base * 2 ** Math.min(attempt, 14) + retryJitterMs()
+        );
+        await sleepMs(delay);
       }
 
+      if (payload === null) {
+        throw new Error(
+          `[Angel] getCandleData gave up on ${ticker} ${fromStr}–${toStr} after ${maxChunkAttempts} attempts. Last: ${lastFailMsg}`
+        );
+      }
+      all.push(...payload);
+
       if (env.angelHttpMinGapMs <= 0 && env.angelApiThrottleMs > 0) {
-        await new Promise((r) => setTimeout(r, env.angelApiThrottleMs));
+        await sleepMs(env.angelApiThrottleMs);
       }
 
       cursor = chunkEnd.plus({ minutes: 1 });
