@@ -20,8 +20,12 @@ function minuteOf(date: Date): number {
   return dt.hour * 60 + dt.minute;
 }
 
-export function evaluateSessionPolicy(at: Date): SessionPolicyEval {
-  if (!env.sessionPolicyEnabled) {
+export function evaluateSessionPolicy(
+  at: Date,
+  options?: { sessionPolicyEnabled?: boolean }
+): SessionPolicyEval {
+  const enabled = options?.sessionPolicyEnabled ?? env.sessionPolicyEnabled;
+  if (!enabled) {
     return {
       phase: "MIDDAY",
       size_multiplier: 1,

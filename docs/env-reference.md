@@ -199,7 +199,8 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `SOFT_SAME_SIDE_OVERFLOW_SIZE_MULTIPLIER` | `0.65` | Size multiplier when same-side cap is exceeded (soft mode) |
 | `SOFT_CORRELATION_HARD_BLOCK` | `0.9` | Correlation above this remains hard-blocked |
 | `SOFT_CORRELATION_MIN_SIZE_MULTIPLIER` | `0.5` | Minimum size multiplier as correlation nears hard block |
-| `MARKET_GATE_ENABLED` | `true` | Enable NIFTY/breadth hard gate |
+| `MARKET_GATE_ENABLED` | `true` | Enable NIFTY/breadth hard gate (live and paper) |
+| `BACKTEST_MARKET_GATE_ENABLED` | *inherits* | If set, used for **replay** only. If unset, same as `MARKET_GATE_ENABLED` |
 | `MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT` | `-1.0` | Blocks long breakout strategies when NIFTY change is below/equal this |
 | `MARKET_BLOCK_LONG_BREAKOUTS_BREADTH` | `0.3` | Blocks long breakout strategies when watchlist green ratio is below this |
 | `MARKET_WEAK_NIFTY_PCT` | `-0.5` | Weak-market threshold for size reduction |
@@ -211,7 +212,8 @@ If credentials incomplete: falls back to `AngelOneStubBroker` — all broker cal
 | `ORB_ENTRY_START` / `ORB_ENTRY_END` | `09:30` / `11:30` | ORB and fakeout windows |
 | `VWAP_ENTRY_START` / `VWAP_ENTRY_END` | `10:00` / `14:00` | VWAP and EMA windows |
 | `MEAN_REV_ENTRY_START` / `MEAN_REV_ENTRY_END` | `10:00` / `14:30` | Mean-reversion window |
-| `SESSION_POLICY_ENABLED` | `true` | Applies time-block policy multipliers and confidence floors |
+| `SESSION_POLICY_ENABLED` | `true` | Applies time-block policy multipliers and confidence floors (live and paper) |
+| `BACKTEST_SESSION_POLICY_ENABLED` | *inherits* | If set, used for **replay** only. If unset, same as `SESSION_POLICY_ENABLED` |
 | `SESSION_OPEN_STRICT_START` / `SESSION_OPEN_STRICT_END` | `09:30` / `10:30` | Stricter open block |
 | `SESSION_OPEN_SIZE_MULTIPLIER` / `SESSION_OPEN_CONFIDENCE_FLOOR` | `0.8` / `0.62` | Open block position-size and confidence requirements |
 | `SESSION_MID_START` / `SESSION_MID_END` | `10:30` / `13:30` | Normal block |
@@ -300,7 +302,16 @@ Calibration note:
 
 ### Strategy Toggles
 
-All 25 strategies are **enabled by default**. The strategy auto-gate (`STRATEGY_AUTO_GATE_ENABLED`) dynamically disables underperformers based on rolling live performance — no need to manually cherry-pick strategies. Disable manually here only if you want to run controlled ablation tests.
+| Scope | Env prefix | Notes |
+|--------|------------|--------|
+| **Live / daemon** | `LIVE_ENABLE_*` | All **on** by default (omit a variable, or any value except `"false"` for the `!== "false"` keys). **Does not** read `BACKTEST_ENABLE_*`. |
+| **Replay / snapshots** | `BACKTEST_ENABLE_*` | Used only when running historical backtests. Tuning these does not affect a running `bun run start` process. |
+
+The strategy auto-gate (`STRATEGY_AUTO_GATE_ENABLED`) can still disable underperformers on **live** based on rolling performance. Use `LIVE_ENABLE_*=false` or `BACKTEST_ENABLE_*=false` only for deliberate ablation or replay research.
+
+`LIVE_ENABLE_*` mirrors the `BACKTEST_ENABLE_*` list below (e.g. `LIVE_ENABLE_ORB_15M` ↔ `BACKTEST_ENABLE_ORB_15M`).
+
+#### Replay (`BACKTEST_ENABLE_*`)
 
 | Variable | Default | Notes |
 |----------|---------|-------|

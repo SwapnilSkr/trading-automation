@@ -119,7 +119,7 @@ export class TradingOrchestrator {
           }
           if (
             env.niftyHeavyweightsMode === "dynamic" &&
-            env.backtestEnableIndexLaggardCatchup
+            env.liveEnableIndexLaggardCatchup
           ) {
             try {
               await this.broker.refreshSessionIfNeeded();
@@ -331,11 +331,11 @@ export class TradingOrchestrator {
             .startOf("minute")
             .toJSDate();
       const hw =
-        env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+        env.liveExecSyncSupplementLaggardUniverse && env.liveEnableIndexLaggardCatchup
           ? await getNifty50HeavyweightSupplementalTickers(this.broker)
           : [];
       const syncList =
-        env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+        env.liveExecSyncSupplementLaggardUniverse && env.liveEnableIndexLaggardCatchup
           ? [...new Set([...tickers, env.niftySymbol, ...hw])]
           : tickers;
       const results = await syncOhlcForRange(this.broker, from, end, syncList);

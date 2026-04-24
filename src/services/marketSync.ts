@@ -15,11 +15,11 @@ export async function syncIntradayHistory(broker: BrokerClient): Promise<void> {
   const start = nowIST().minus({ hours: 6 }).toJSDate();
   const watch = await resolveWatchlistTickers();
   const hw =
-    env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+    env.liveExecSyncSupplementLaggardUniverse && env.liveEnableIndexLaggardCatchup
       ? await getNifty50HeavyweightSupplementalTickers(broker)
       : [];
   const tickers =
-    env.liveExecSyncSupplementLaggardUniverse && env.backtestEnableIndexLaggardCatchup
+    env.liveExecSyncSupplementLaggardUniverse && env.liveEnableIndexLaggardCatchup
       ? [...new Set([...watch, env.niftySymbol, ...hw])]
       : watch;
   await syncOhlcForRange(broker, start, end, tickers);

@@ -19,6 +19,17 @@ function bool(name: string, def: boolean): boolean {
   return v === "true";
 }
 
+/** If `backtestKey` is set, use it; else same boolean resolution as `sharedKey` (for replay-only overrides). */
+function boolBacktestOverride(
+  backtestKey: string,
+  sharedKey: string,
+  def: boolean
+): boolean {
+  const b = process.env[backtestKey];
+  if (b !== undefined && b !== "") return b === "true";
+  return bool(sharedKey, def);
+}
+
 function str(name: string, def: string): string {
   const v = process.env[name];
   return v === undefined || v === "" ? def : v;
@@ -398,6 +409,12 @@ export const env = {
 
   // ── Market regime hard gates ───────────────────────────────────────────────
   marketGateEnabled: bool("MARKET_GATE_ENABLED", true),
+  /** Replay only: NIFTY/breadth gate. If unset, follows `MARKET_GATE_ENABLED`. */
+  backtestMarketGateEnabled: boolBacktestOverride(
+    "BACKTEST_MARKET_GATE_ENABLED",
+    "MARKET_GATE_ENABLED",
+    true
+  ),
   marketBlockLongBreakoutsNiftyPct: num(
     "MARKET_BLOCK_LONG_BREAKOUTS_NIFTY_PCT",
     -1.0,
@@ -425,6 +442,12 @@ export const env = {
 
   // ── Session-aware execution policy ────────────────────────────────────────
   sessionPolicyEnabled: bool("SESSION_POLICY_ENABLED", true),
+  /** Replay only: time-block policy. If unset, follows `SESSION_POLICY_ENABLED`. */
+  backtestSessionPolicyEnabled: boolBacktestOverride(
+    "BACKTEST_SESSION_POLICY_ENABLED",
+    "SESSION_POLICY_ENABLED",
+    true
+  ),
   sessionOpenStrictStart: str("SESSION_OPEN_STRICT_START", "09:30"),
   sessionOpenStrictEnd: str("SESSION_OPEN_STRICT_END", "10:30"),
   sessionOpenSizeMultiplier: num("SESSION_OPEN_SIZE_MULTIPLIER", 0.8),
@@ -463,7 +486,69 @@ export const env = {
   exitTrailDistPct: num("EXIT_TRAIL_DIST_PCT", 0.005),
   /** Position size in shares for backtest PnL calculation */
   backtestPositionQty: num("BACKTEST_POSITION_QTY", 25),
-  /** Strategy toggles (used by live + backtest trigger evaluation) */
+
+  // ── Live / daemon strategy toggles (default on: omit or any value except "false") ──
+  liveEnableOrb15m: process.env.LIVE_ENABLE_ORB_15M !== "false",
+  liveEnableOrbRetest15m: process.env.LIVE_ENABLE_ORB_RETEST_15M !== "false",
+  liveEnableMeanRevZ: process.env.LIVE_ENABLE_MEAN_REV_Z !== "false",
+  liveEnableBigBoySweep: process.env.LIVE_ENABLE_BIG_BOY_SWEEP !== "false",
+  liveEnableVwapReclaimReject:
+    process.env.LIVE_ENABLE_VWAP_RECLAIM_REJECT !== "false",
+  liveEnableVwapPullbackTrend:
+    process.env.LIVE_ENABLE_VWAP_PULLBACK_TREND !== "false",
+  liveEnablePrevDayBreakRetest:
+    process.env.LIVE_ENABLE_PREV_DAY_HIGH_LOW_BREAK_RETEST !== "false",
+  liveEnableEma20BreakRetest:
+    process.env.LIVE_ENABLE_EMA20_BREAK_RETEST !== "false",
+  liveEnableVwapReclaimContinuation:
+    process.env.LIVE_ENABLE_VWAP_RECLAIM_CONTINUATION !== "false",
+  liveEnableInitialBalanceBreakRetest:
+    process.env.LIVE_ENABLE_INITIAL_BALANCE_BREAK_RETEST !== "false",
+  liveEnableVolContractionBreakout:
+    process.env.LIVE_ENABLE_VOLATILITY_CONTRACTION_BREAKOUT !== "false",
+  liveEnableInsideBarBreakoutRetest:
+    process.env.LIVE_ENABLE_INSIDE_BAR_BREAKOUT_WITH_RETEST !== "false",
+  liveEnableOpenDrivePullback:
+    process.env.LIVE_ENABLE_OPEN_DRIVE_PULLBACK !== "false",
+  liveEnableOrbFakeoutReversal:
+    process.env.LIVE_ENABLE_ORB_FAKEOUT_REVERSAL !== "false",
+  liveEnableEmaRibbonTrend: bool("LIVE_ENABLE_EMA_RIBBON_TREND", true),
+  liveEnableCandleMomentumSurge: bool(
+    "LIVE_ENABLE_CANDLE_MOMENTUM_SURGE",
+    true,
+  ),
+  liveEnableTrendFlagBreakout: bool("LIVE_ENABLE_TREND_FLAG_BREAKOUT", true),
+  liveEnableVwapReversalConfirmation: bool(
+    "LIVE_ENABLE_VWAP_REVERSAL_CONFIRMATION",
+    true,
+  ),
+  liveEnableFiveMinOrbBreak: bool("LIVE_ENABLE_FIVE_MIN_ORB_BREAK", true),
+  liveEnableSessionHighLowBreak: bool(
+    "LIVE_ENABLE_SESSION_HIGH_LOW_BREAK",
+    true,
+  ),
+  liveEnableEngulfingWithVolume: bool(
+    "LIVE_ENABLE_ENGULFING_WITH_VOLUME",
+    true,
+  ),
+  liveEnableDonchian20Breakout: bool(
+    "LIVE_ENABLE_DONCHIAN_20_BREAKOUT",
+    true,
+  ),
+  liveEnableThreeBarPullbackContinuation: bool(
+    "LIVE_ENABLE_THREE_BAR_PULLBACK_CONTINUATION",
+    true,
+  ),
+  liveEnableNr7ExpansionBreakout: bool(
+    "LIVE_ENABLE_NR7_EXPANSION_BREAKOUT",
+    true,
+  ),
+  liveEnableIndexLaggardCatchup: bool(
+    "LIVE_ENABLE_INDEX_LAGGARD_CATCHUP",
+    true,
+  ),
+
+  /** Replay-only strategy toggles; live uses `liveEnable*` above. */
   backtestEnableOrb15m: process.env.BACKTEST_ENABLE_ORB_15M !== "false",
   backtestEnableOrbRetest15m:
     process.env.BACKTEST_ENABLE_ORB_RETEST_15M !== "false",

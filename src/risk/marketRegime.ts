@@ -85,9 +85,11 @@ export async function buildMarketRegimeSnapshot(
 export function evaluateMarketRegime(
   strategy: StrategyId,
   side: "BUY" | "SELL",
-  snapshot?: MarketRegimeSnapshot
+  snapshot?: MarketRegimeSnapshot,
+  options?: { marketGateEnabled?: boolean }
 ): MarketRegimeEval {
-  if (!env.marketGateEnabled || !snapshot) {
+  const gateOn = options?.marketGateEnabled ?? env.marketGateEnabled;
+  if (!gateOn || !snapshot) {
     return {
       allowed: true,
       reasons: [],

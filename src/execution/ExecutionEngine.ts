@@ -748,97 +748,139 @@ export class ExecutionEngine {
       : nowIST();
 
     const triggers: TriggerHit[] = [];
-    if (env.backtestEnableOrb15m) {
+    const st = (live: boolean, bt: boolean) => (backtest ? bt : live);
+    if (st(env.liveEnableOrb15m, env.backtestEnableOrb15m)) {
       const orb = evaluateOrb(sessionCandles);
       if (orb) triggers.push(orb);
     }
-    if (env.backtestEnableOrbRetest15m) {
+    if (st(env.liveEnableOrbRetest15m, env.backtestEnableOrbRetest15m)) {
       const orbRetest = evaluateOrbRetest15m(sessionCandles);
       if (orbRetest) triggers.push(orbRetest);
     }
-    if (env.backtestEnableMeanRevZ) {
+    if (st(env.liveEnableMeanRevZ, env.backtestEnableMeanRevZ)) {
       const mr = evaluateMeanReversion(sessionCandles);
       if (mr) triggers.push(mr);
     }
-    if (env.backtestEnableVwapReclaimReject) {
+    if (st(env.liveEnableVwapReclaimReject, env.backtestEnableVwapReclaimReject)) {
       const vw = evaluateVwapReclaimReject(sessionCandles);
       if (vw) triggers.push(vw);
     }
-    if (env.backtestEnableVwapPullbackTrend) {
+    if (st(env.liveEnableVwapPullbackTrend, env.backtestEnableVwapPullbackTrend)) {
       const vwPull = evaluateVwapPullbackTrend(sessionCandles);
       if (vwPull) triggers.push(vwPull);
     }
-    if (env.backtestEnableEma20BreakRetest) {
+    if (st(env.liveEnableEma20BreakRetest, env.backtestEnableEma20BreakRetest)) {
       const emaRetest = evaluateEma20BreakRetest(sessionCandles);
       if (emaRetest) triggers.push(emaRetest);
     }
-    if (env.backtestEnableVwapReclaimContinuation) {
+    if (
+      st(
+        env.liveEnableVwapReclaimContinuation,
+        env.backtestEnableVwapReclaimContinuation
+      )
+    ) {
       const vwapCont = evaluateVwapReclaimContinuation(sessionCandles);
       if (vwapCont) triggers.push(vwapCont);
     }
-    if (env.backtestEnableInitialBalanceBreakRetest) {
+    if (
+      st(
+        env.liveEnableInitialBalanceBreakRetest,
+        env.backtestEnableInitialBalanceBreakRetest
+      )
+    ) {
       const ib = evaluateInitialBalanceBreakRetest(sessionCandles);
       if (ib) triggers.push(ib);
     }
-    if (env.backtestEnableVolContractionBreakout) {
+    if (
+      st(
+        env.liveEnableVolContractionBreakout,
+        env.backtestEnableVolContractionBreakout
+      )
+    ) {
       const vc = evaluateVolatilityContractionBreakout(sessionCandles);
       if (vc) triggers.push(vc);
     }
-    if (env.backtestEnableInsideBarBreakoutRetest) {
+    if (
+      st(
+        env.liveEnableInsideBarBreakoutRetest,
+        env.backtestEnableInsideBarBreakoutRetest
+      )
+    ) {
       const ibb = evaluateInsideBarBreakoutRetest(sessionCandles);
       if (ibb) triggers.push(ibb);
     }
-    if (env.backtestEnableOpenDrivePullback) {
+    if (st(env.liveEnableOpenDrivePullback, env.backtestEnableOpenDrivePullback)) {
       const odp = evaluateOpenDrivePullback(sessionCandles);
       if (odp) triggers.push(odp);
     }
-    if (env.backtestEnableOrbFakeoutReversal) {
+    if (
+      st(env.liveEnableOrbFakeoutReversal, env.backtestEnableOrbFakeoutReversal)
+    ) {
       const ofr = evaluateOrbFakeoutReversal(sessionCandles);
       if (ofr) triggers.push(ofr);
     }
-    if (env.backtestEnableEmaRibbonTrend) {
+    if (st(env.liveEnableEmaRibbonTrend, env.backtestEnableEmaRibbonTrend)) {
       const ert = evaluateEmaRibbonTrend(sessionCandles);
       if (ert) triggers.push(ert);
     }
-    if (env.backtestEnableCandleMomentumSurge) {
+    if (
+      st(env.liveEnableCandleMomentumSurge, env.backtestEnableCandleMomentumSurge)
+    ) {
       const cms = evaluateCandleMomentumSurge(sessionCandles);
       if (cms) triggers.push(cms);
     }
-    if (env.backtestEnableTrendFlagBreakout) {
+    if (st(env.liveEnableTrendFlagBreakout, env.backtestEnableTrendFlagBreakout)) {
       const tfb = evaluateTrendFlagBreakout(sessionCandles);
       if (tfb) triggers.push(tfb);
     }
-    if (env.backtestEnableVwapReversalConfirmation) {
+    if (
+      st(
+        env.liveEnableVwapReversalConfirmation,
+        env.backtestEnableVwapReversalConfirmation
+      )
+    ) {
       const vrc = evaluateVwapReversalConfirmation(sessionCandles);
       if (vrc) triggers.push(vrc);
     }
-    if (env.backtestEnableFiveMinOrbBreak) {
+    if (st(env.liveEnableFiveMinOrbBreak, env.backtestEnableFiveMinOrbBreak)) {
       const fmob = evaluateFiveMinOrbBreak(sessionCandles);
       if (fmob) triggers.push(fmob);
     }
-    if (env.backtestEnableSessionHighLowBreak) {
+    if (
+      st(env.liveEnableSessionHighLowBreak, env.backtestEnableSessionHighLowBreak)
+    ) {
       const shlb = evaluateSessionHighLowBreak(sessionCandles);
       if (shlb) triggers.push(shlb);
     }
-    if (env.backtestEnableEngulfingWithVolume) {
+    if (
+      st(env.liveEnableEngulfingWithVolume, env.backtestEnableEngulfingWithVolume)
+    ) {
       const ewv = evaluateEngulfingWithVolume(sessionCandles);
       if (ewv) triggers.push(ewv);
     }
-    if (env.backtestEnableDonchian20Breakout) {
+    if (st(env.liveEnableDonchian20Breakout, env.backtestEnableDonchian20Breakout)) {
       const d20 = evaluateDonchian20Breakout(sessionCandles);
       if (d20) triggers.push(d20);
     }
-    if (env.backtestEnableThreeBarPullbackContinuation) {
+    if (
+      st(
+        env.liveEnableThreeBarPullbackContinuation,
+        env.backtestEnableThreeBarPullbackContinuation
+      )
+    ) {
       const pb3 = evaluateThreeBarPullbackContinuation(sessionCandles);
       if (pb3) triggers.push(pb3);
     }
-    if (env.backtestEnableNr7ExpansionBreakout) {
+    if (st(env.liveEnableNr7ExpansionBreakout, env.backtestEnableNr7ExpansionBreakout)) {
       const nr7 = evaluateNr7ExpansionBreakout(sessionCandles);
       if (nr7) triggers.push(nr7);
     }
 
     if (
-      env.backtestEnableIndexLaggardCatchup &&
+      st(
+        env.liveEnableIndexLaggardCatchup,
+        env.backtestEnableIndexLaggardCatchup
+      ) &&
       isNifty50Heavyweight(ticker, { isBacktest: Boolean(backtest) })
     ) {
       const at = backtest?.simulatedAt ?? new Date();
@@ -869,11 +911,11 @@ export class ExecutionEngine {
     const priorTo = priorDayStart.endOf("day").toJSDate();
     const priorDay = await fetchOhlcRange(ticker, priorFrom, priorTo);
     const pd = priorDayHighLow(priorDay);
-    if (env.backtestEnableBigBoySweep && pd && last5m) {
+    if (st(env.liveEnableBigBoySweep, env.backtestEnableBigBoySweep) && pd && last5m) {
       const bb = evaluateBigBoy(last5m, pd);
       if (bb) triggers.push(bb);
     }
-    if (env.backtestEnablePrevDayBreakRetest && pd) {
+    if (st(env.liveEnablePrevDayBreakRetest, env.backtestEnablePrevDayBreakRetest) && pd) {
       const pdRetest = evaluatePrevDayBreakRetest(sessionCandles, pd);
       if (pdRetest) triggers.push(pdRetest);
     }
@@ -1053,11 +1095,20 @@ export class ExecutionEngine {
     const snap = normalizeSnapshot(hit.snapshot);
     const safetyEval = evaluateSafety(this.safety, this.openCount);
     const timeEval = evaluateTimeWindow(hit.strategy, entryTime);
-    const sessionEval = evaluateSessionPolicy(entryTime);
+    const sessionEnabled = backtest
+      ? env.backtestSessionPolicyEnabled
+      : env.sessionPolicyEnabled;
+    const marketGateEnabled = backtest
+      ? env.backtestMarketGateEnabled
+      : env.marketGateEnabled;
+    const sessionEval = evaluateSessionPolicy(entryTime, {
+      sessionPolicyEnabled: sessionEnabled,
+    });
     const marketEval = evaluateMarketRegime(
       hit.strategy,
       side,
-      ctx.marketSnapshot
+      ctx.marketSnapshot,
+      { marketGateEnabled }
     );
     const prePortfolioRiskMultiplier = Math.max(
       0.05,

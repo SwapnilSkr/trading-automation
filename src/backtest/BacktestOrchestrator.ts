@@ -277,7 +277,7 @@ export async function runBacktestReplay(
         }
 
         let marketSnapshot = marketSnapshotCache.get(tsMs);
-        if (env.marketGateEnabled && !marketSnapshot) {
+        if (env.backtestMarketGateEnabled && !marketSnapshot) {
           marketSnapshot = await buildMarketRegimeSnapshot(
             [...barsByTicker.keys()],
             r.bar.ts
