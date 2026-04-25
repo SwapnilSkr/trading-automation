@@ -12,6 +12,9 @@ import { runDiscoverySync } from "../services/discoveryRun.js";
 import { runPreopenPivot } from "../services/preopenPivot.js";
 import { fetchNiftyTrendContext } from "../services/niftyTrend.js";
 import { buildMarketRegimeSnapshot } from "../risk/marketRegime.js";
+import { ensureMarketLtpStream, getLastLtpFromStream } from "../services/marketLtpStream.js";
+import { fetchThrottledCircuitProximity } from "../services/fullQuoteRisk.js";
+import { maybePollOrderReconciliation } from "../services/orderReconciliationPoll.js";
 import { runAnalystForDate, runLiveAnalyzeForDate } from "../services/eveningJobs.js";
 import { env } from "../config/env.js";
 import {
@@ -144,7 +147,10 @@ export class TradingOrchestrator {
           this.fullSessionExecSyncDoneForDay !== todayStr;
         await this.maybeSyncExecutionBars(watch, end, forceFullSessionSync);
         if (forceFullSessionSync) this.fullSessionExecSyncDoneForDay = todayStr;
-        const marketSnapshot = await buildMarketRegimeSnapshot(watch, end);
+        await ensureMarketLtpStream(this.broker, watch);
+        const circuitCtx = await fetchThrottledCircuitProximity(this.broker, watch);
+        const baseRegime = await buildMarketRegimeSnapshot(watch, end);
+        const marketSnapshot = { ...baseRegime, ...circuitCtx };
         for (const ticker of watch) {
           let candles = await fetchOhlcRange(ticker, day, end);
           if (candles.length < 30) {
@@ -153,7 +159,10 @@ export class TradingOrchestrator {
           }
           const last5m = aggregateLastNMinutes(candles, 5);
           // Check exits first (stop-loss / profit-target / trailing stop)
-          await this.engine.checkLiveExits(ticker, candles);
+          const lastLtp = getLastLtpFromStream(ticker);
+          await this.engine.checkLiveExits(ticker, candles, {
+            lastLtp: lastLtp,
+          });
           await this.engine.runScanningPass({
             ticker,
             sessionCandles: candles,
@@ -163,6 +172,7 @@ export class TradingOrchestrator {
             marketSnapshot,
           });
         }
+        await maybePollOrderReconciliation(this.broker);
         if (env.executionEnv === "LIVE") {
           try {
             const positions = await this.broker.listOpenPositions();

@@ -3,6 +3,7 @@ import type { Ohlc1m } from "../types/domain.js";
 import type {
   BrokerClient,
   BrokerPosition,
+  BrokerRmsSnapshot,
   MarketQuoteFullRow,
 } from "./types.js";
 
@@ -52,7 +53,11 @@ export class AngelOneStubBroker implements BrokerClient {
     side: "BUY" | "SELL";
     qty: number;
     strategy: string;
-  }): Promise<{ orderId: string }> {
+    orderKind?: "MARKET" | "LIMIT" | "SL" | "SL-M";
+    limitPrice?: number;
+    orderTag?: string;
+    lastLtpHint?: number;
+  }): Promise<{ orderId: string; uniqueOrderId?: string }> {
     const id = `paper-${Date.now()}-${input.ticker}`;
     console.log("[AngelOneStub] PAPER order", { ...input, orderId: id });
     return { orderId: id };
@@ -64,5 +69,9 @@ export class AngelOneStubBroker implements BrokerClient {
 
   async listOpenPositions(): Promise<BrokerPosition[]> {
     return [];
+  }
+
+  async fetchRmsSnapshot(): Promise<BrokerRmsSnapshot | null> {
+    return null;
   }
 }

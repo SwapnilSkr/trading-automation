@@ -12,6 +12,7 @@ import type {
   TradeLogDoc,
   WatchlistSnapshotDoc,
 } from "../types/domain.js";
+import type { OrderLifecycleEventDoc } from "../types/orderLifecycle.js";
 
 export type { PerformerScoreRow } from "../types/domain.js";
 
@@ -28,6 +29,16 @@ export async function ensureIndexes(): Promise<void> {
   const trades = await col<TradeLogDoc>(collections.trades);
   await trades.createIndex({ entry_time: -1 });
   await trades.createIndex({ ticker: 1, strategy: 1 });
+  await trades.createIndex({ angel_orderid: 1 }, { sparse: true });
+  await trades.createIndex({ angel_uniqueorderid: 1 }, { sparse: true });
+
+  const orderEv = await col<OrderLifecycleEventDoc>(
+    collections.orderLifecycleEvents
+  );
+  await orderEv.createIndex({ idempotency_key: 1 }, { unique: true });
+  await orderEv.createIndex({ received_at: -1 });
+  await orderEv.createIndex({ orderid: 1 }, { sparse: true });
+  await orderEv.createIndex({ uniqueorderid: 1 }, { sparse: true });
   await trades.createIndex(
     { strategy: 1, env: 1, order_executed: 1, entry_time: -1 },
     { partialFilterExpression: { "result.outcome": { $exists: true } } }
@@ -127,6 +138,61 @@ export async function updateTradePartialExits(
       },
     }
   );
+}
+
+export async function updateTradeBrokerFields(
+  tradeId: ObjectId,
+  patch: Pick<
+    TradeLogDoc,
+    "angel_orderid" | "angel_uniqueorderid" | "broker_order_status"
+  >
+): Promise<void> {
+  const c = await col<TradeLogDoc>(collections.trades);
+  const $set: Record<string, string> = {};
+  if (patch.angel_orderid !== undefined) $set.angel_orderid = patch.angel_orderid;
+  if (patch.angel_uniqueorderid !== undefined) {
+    $set.angel_uniqueorderid = patch.angel_uniqueorderid;
+  }
+  if (patch.broker_order_status !== undefined) {
+    $set.broker_order_status = patch.broker_order_status;
+  }
+  if (Object.keys($set).length === 0) return;
+  await c.updateOne({ _id: tradeId }, { $set });
+}
+
+/**
+ * @returns true if inserted, false if duplicate idempotency_key
+ */
+export async function insertOrderLifecycleEventIfNew(
+  doc: OrderLifecycleEventDoc
+): Promise<boolean> {
+  const c = await col<OrderLifecycleEventDoc>(
+    collections.orderLifecycleEvents
+  );
+  try {
+    await c.insertOne(doc);
+    return true;
+  } catch (e) {
+    const err = e as { code?: number };
+    if (err.code === 11000) return false;
+    throw e;
+  }
+}
+
+export async function findOpenTradeIdByBrokerOrderId(
+  orderid?: string,
+  uniqueorderid?: string
+): Promise<ObjectId | null> {
+  if (!orderid && !uniqueorderid) return null;
+  const c = await col<TradeLogDoc & { _id: ObjectId }>(collections.trades);
+  const or: Record<string, string>[] = [];
+  if (orderid) or.push({ angel_orderid: orderid });
+  if (uniqueorderid) or.push({ angel_uniqueorderid: uniqueorderid });
+  const t = await c.findOne(
+    { $or: or, result: { $exists: false }, order_executed: { $ne: false } },
+    { sort: { entry_time: -1 } }
+  );
+  return t?._id ?? null;
 }
 
 export async function insertBacktestTrade(doc: TradeLogDoc): Promise<void> {

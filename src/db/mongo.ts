@@ -36,4 +36,6 @@ export const collections = {
   funnelTuningState: "funnel_tuning_state",
   funnelOptimizerReports: "funnel_optimizer_reports",
   operatorRuns: "operator_runs",
+  /** Idempotent order lifecycle (postback / poll / synthetic PAPER) */
+  orderLifecycleEvents: "order_lifecycle_events",
 } as const;

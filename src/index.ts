@@ -8,6 +8,7 @@ import {
   getLastTickAtMs,
   markOrchestratorTick,
 } from "./runtime/healthMetrics.js";
+import { handleAngelPostback } from "./http/angelPostbackRoute.js";
 
 const TICK_STALE_MS = 2 * 60 * 1000;
 
@@ -17,6 +18,11 @@ const orchestrator = new TradingOrchestrator(broker);
 await orchestrator.startup();
 
 const app = new Elysia()
+  .post("/v1/angel/postback", async ({ request, body, set }) => {
+    const r = await handleAngelPostback(request, body);
+    set.status = r.status;
+    return r.body;
+  })
   .get("/health", () => {
     const lastMs = getLastTickAtMs();
     const hasTick = lastMs > 0;

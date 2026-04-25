@@ -16,6 +16,8 @@ If you are not sure what to edit, start with only these:
 
 If in doubt, keep defaults and run in paper mode.
 
+**Temporarily testing many values:** The `bun run backtest-research` command runs `backtest-snapshots` once per combination and passes **overrides only to that child process** (your `.env` file is unchanged). See `docs/backtest-research.md` for presets (`--preset`) and custom axes (`--set`).
+
 ---
 
 ## Database

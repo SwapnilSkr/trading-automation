@@ -151,6 +151,10 @@ If you only need operating steps, use `docs/instructions.md`.
 │                                                                     │
 │  backtest-analyze → win rate, profit factor, Sharpe, max DD        │
 │                     per-strategy and per-ticker breakdowns          │
+│                                                                     │
+│  backtest-research → for each (profile × env grid) combo:            │
+│    spawn backtest-snapshots with merged env, load trades by run_id, │
+│    rank PF/PnL; optional second date range (out-of-sample)         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -215,7 +219,11 @@ src/
 │
 ├── backtest/
 │   ├── BacktestOrchestrator.ts  # Full replay with exit simulation
-│   └── hybridBacktest.ts        # Pattern-based sample backtest (used by weekend-optimize)
+│   ├── backtestProfiles.ts     # Shared BACKTEST_ENABLE_* profile bundles
+│   ├── researchGrid.ts         # Cartesian env merge (research CLI)
+│   ├── researchPresets.ts      # Named key/value sweeps
+│   ├── tradeMetrics.ts         # PF, drawdown, Sharpe from trade rows
+│   └── hybridBacktest.ts     # Pattern-based sample backtest (used by weekend-optimize)
 │
 ├── broker/
 │   ├── types.ts                 # BrokerClient interface
@@ -239,6 +247,7 @@ src/
 │   ├── backtest-data-audit.ts   # CLI: Mongo ohlc_1m + watchlist_snapshots coverage for a range
 │   ├── discovery-sync.ts        # CLI entry for discovery
 │   ├── backtest.ts              # CLI entry for backtest
+│   ├── backtest-research.ts     # CLI: grid / multi-profile research on env vars
 │   ├── backtest-analyze.ts      # CLI entry for result analysis
 │   ├── shadow-eval-report.ts    # CLI summary of layer-1 shadow disagreements
 │   ├── weekend-optimize.ts      # Pattern mining + Pinecone upsert

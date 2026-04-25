@@ -72,6 +72,9 @@ import {
   evaluateMarketRegime,
   type MarketRegimeSnapshot,
 } from "../risk/marketRegime.js";
+import { buildEntryOrderParams } from "./orderPolicy.js";
+import { getLastLtpFromStream } from "../services/marketLtpStream.js";
+import { recordSyntheticPaperOrder } from "../services/orderLifecycleService.js";
 import {
   evaluatePortfolioRisk,
   type PortfolioPosition,
@@ -497,18 +500,33 @@ export class ExecutionEngine {
    * Call on each EXECUTION tick BEFORE runScanningPass.
    * Checks open paper positions against stop/target using latest candle.
    * Closes positions that hit their levels via broker.closeIntraday.
+   * @param opts.lastLtp — optional last traded price from SmartAPI market WebSocket; widens
+   *   the effective 1m bar range so stop/target can fire between bar prints (see `marketLtpStream`).
    */
-  async checkLiveExits(ticker: string, sessionCandles: Ohlc1m[]): Promise<void> {
+  async checkLiveExits(
+    ticker: string,
+    sessionCandles: Ohlc1m[],
+    opts?: { lastLtp?: number }
+  ): Promise<void> {
     const pos = this.livePositions.get(ticker);
     if (!pos || sessionCandles.length === 0) return;
 
     const bar = sessionCandles[sessionCandles.length - 1]!;
+    const lastLtp = opts?.lastLtp;
+    const barForExit =
+      lastLtp !== undefined
+        ? {
+            ...bar,
+            h: Math.max(bar.h, lastLtp),
+            l: Math.min(bar.l, lastLtp),
+          }
+        : bar;
 
     // Update peak
-    if (pos.side === "BUY" && bar.h > pos.peakPrice) pos.peakPrice = bar.h;
-    if (pos.side === "SELL" && bar.l < pos.peakPrice) pos.peakPrice = bar.l;
+    if (pos.side === "BUY" && barForExit.h > pos.peakPrice) pos.peakPrice = barForExit.h;
+    if (pos.side === "SELL" && barForExit.l < pos.peakPrice) pos.peakPrice = barForExit.l;
 
-    await this.processLivePartialExits(pos, bar);
+    await this.processLivePartialExits(pos, barForExit, lastLtp);
     if (pos.remainingQty <= 0) return;
 
     // ATR-based exits: use ATR at entry if available, else fall back to fixed %
@@ -532,7 +550,7 @@ export class ExecutionEngine {
     let exitReason = "";
     // Exit price: use the stop/target level that was hit, not bar close.
     // This avoids both over- and under-estimating PnL when price blows through a level mid-bar.
-    let exitPrice = bar.c;
+    let exitPrice = barForExit.c;
 
     if (pos.side === "BUY") {
       const stopPrice = pos.entryPrice - stopDist;
@@ -541,12 +559,12 @@ export class ExecutionEngine {
       const trailStop = trailActive ? pos.peakPrice - trailDistAbs : 0;
       const effectiveStop = trailActive ? Math.max(stopPrice, trailStop) : stopPrice;
 
-      // Use bar.h/bar.l — catches intrabar stop/target hits that bar.c misses entirely
-      if (bar.h >= targetPrice) {
+      // Use bar high/low (optionally widened with stream LTP) for intrabar stop/target
+      if (barForExit.h >= targetPrice) {
         shouldExit = true;
         exitPrice = targetPrice;
         exitReason = `target hit (${targetPrice.toFixed(2)})`;
-      } else if (bar.l <= effectiveStop) {
+      } else if (barForExit.l <= effectiveStop) {
         shouldExit = true;
         exitPrice = effectiveStop;
         exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`;
@@ -558,11 +576,11 @@ export class ExecutionEngine {
       const trailStop = trailActive ? pos.peakPrice + trailDistAbs : Infinity;
       const effectiveStop = trailActive ? Math.min(stopPrice, trailStop) : stopPrice;
 
-      if (bar.l <= targetPrice) {
+      if (barForExit.l <= targetPrice) {
         shouldExit = true;
         exitPrice = targetPrice;
         exitReason = `target hit (${targetPrice.toFixed(2)})`;
-      } else if (bar.h >= effectiveStop) {
+      } else if (barForExit.h >= effectiveStop) {
         shouldExit = true;
         exitPrice = effectiveStop;
         exitReason = `stop hit (${effectiveStop.toFixed(2)}${trailActive ? " trailing" : ""})`;
@@ -580,7 +598,7 @@ export class ExecutionEngine {
       this.recordPnl(pnl);
       if (pos.tradeId) {
         await updateTradeExit(pos.tradeId, {
-          exit_time: bar.ts,
+          exit_time: barForExit.ts,
           result,
         });
       }
@@ -589,7 +607,8 @@ export class ExecutionEngine {
 
   private async processLivePartialExits(
     pos: LivePosition,
-    bar: Ohlc1m
+    bar: Ohlc1m,
+    lastLtp?: number
   ): Promise<void> {
     if (!env.partialExitsEnabled) return;
     if (!pos.atrAtEntry || pos.atrAtEntry <= 0) return;
@@ -615,6 +634,7 @@ export class ExecutionEngine {
         side: closeSide,
         qty,
         strategy: `${pos.strategy}:${step.reason}`,
+        lastLtpHint: lastLtp,
       });
       const pnl = pnlForExit(pos.side, pos.entryPrice, bar.c, qty);
       pos.remainingQty = Math.max(0, pos.remainingQty - qty);
@@ -1443,12 +1463,23 @@ export class ExecutionEngine {
       doc.entry_price = entryPrice;
       doc.qty = qty;
       doc.atr_at_entry = atrValue;
-      await this.broker.placePaperOrder({
+      const lastLtp = !backtest ? getLastLtpFromStream(ticker) : undefined;
+      const orderParams = buildEntryOrderParams({
+        ticker,
+        side,
+        strategy: hit.strategy,
+        entryPrice,
+        lastLtp,
+      });
+      const ord = await this.broker.placePaperOrder({
         ticker,
         side,
         qty,
         strategy: hit.strategy,
+        ...orderParams,
       });
+      doc.angel_orderid = ord.orderId;
+      if (ord.uniqueOrderId) doc.angel_uniqueorderid = ord.uniqueOrderId;
       if (!backtest && env.liveDebugScans) {
         console.log(
           `[Entry] ${ticker} ${hit.strategy} ${side} qty=${qty} @ ${entryPrice.toFixed(2)} ATR=${atrValue?.toFixed(2) ?? "n/a"}`
@@ -1458,6 +1489,14 @@ export class ExecutionEngine {
       // Track position for live stop/target management
       if (!backtest) {
         const tradeId = await insertTrade(doc);
+        if (env.executionEnv !== "LIVE") {
+          await recordSyntheticPaperOrder({
+            orderId: ord.orderId,
+            uniqueOrderId: ord.uniqueOrderId,
+            tradingsymbol: ticker,
+            tradeId,
+          });
+        }
         liveEntryPersisted = true;
         this.livePositions.set(ticker, {
           ticker,

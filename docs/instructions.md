@@ -238,6 +238,16 @@ bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --fail-on-missin
 bun run backtest-snapshots -- --from YYYY-MM-DD --to YYYY-MM-DD --news-min-headlines 12
 ```
 
+## Research / grid backtest (tune env many times)
+
+Use this when you want the computer to try **many combinations** of settings (ATR stops, targets, friction, gates) on the **same** history and give you a ranked table. It does **not** change your `.env` on disk; each run is a temporary override.
+
+```bash
+bun run backtest-research -- --from YYYY-MM-DD --to YYYY-MM-DD --preset quick --skip-judge
+```
+
+See **`docs/backtest-research.md`** for the full story: presets, `--set`, strategy profiles, optional out-of-sample dates, and where the JSON/CSV reports go.
+
 ## Confidence Calibration Check (Simple)
 
 Use this when you want to verify whether model confidence aligns with real outcomes:

@@ -239,6 +239,44 @@ export const env = {
 
   healthPort: num("HEALTH_PORT", 3000),
 
+  /** When set, POST /v1/angel/postback requires header `x-postback-secret` to match */
+  angelPostbackSecret: str("ANGEL_POSTBACK_SECRET", ""),
+  /**
+   * LIVE: poll `getOrderBook` on this interval (ms) as fallback for order updates.
+   * Uses the existing SmartAPI queue; 0 disables.
+   */
+  orderReconciliationPollMs: num("ORDER_RECONCILIATION_POLL_MS", 0),
+
+  /** SmartAPI market WebSocket 2.0 (LTP between 1m bars) */
+  marketWsEnabled: bool("MARKET_WS_ENABLED", true),
+  /** 1=LTP, 2=Quote (higher payload; prefer LTP for exits) */
+  marketWsSubscriptionMode: num("MARKET_WS_SUBSCRIPTION_MODE", 1),
+  marketWsMaxTokensPerBatch: num("MARKET_WS_MAX_TOKENS_PER_BATCH", 50),
+  marketWsReconnectBaseMs: num("MARKET_WS_RECONNECT_BASE_MS", 2000),
+  marketWsMaxReconnectMs: num("MARKET_WS_MAX_RECONNECT_MS", 120_000),
+
+  /**
+   * Throttled FULL quote: index + top K watchlist names (for circuit / book context).
+   */
+  fullQuoteThrottleMs: num("FULL_QUOTE_THROTTLE_MS", 15_000),
+  fullQuoteTopK: num("FULL_QUOTE_TOP_K", 12),
+  /** Block long entries when abs(ltp - circuit) / circuit * 100 is below this (index + name) */
+  circuitProximityVetoPct: num("CIRCUIT_PROXIMITY_VETO_PCT", 0.5),
+
+  /** Use LIMIT entry (LIVE → real API; broker must support) */
+  executeLimitOrders: bool("EXECUTE_LIMIT_ORDERS", false),
+  /** PAPER: if true, simulate limit fills vs last LTP when LIMIT is used */
+  paperSimulateLimitFills: bool("PAPER_SIMULATE_LIMIT_FILLS", false),
+  /** Soft cap on modifyOrder calls per calendar day (engine tracks) */
+  orderModifyMaxPerDay: num("ORDER_MODIFY_MAX_PER_DAY", 8),
+  /** Rupee offset from ref price for “aggressive” limit */
+  aggressiveLimitTickOffset: num("AGGRESSIVE_LIMIT_TICK_OFFSET", 0.05),
+  /**
+   * Backtest: if true, optional limit-touch fill path in `backtest/microstructure` can be used
+   * when simulating limit orders (separate from live `EXECUTE_LIMIT_ORDERS`).
+   */
+  backtestLimitTouchFill: bool("BACKTEST_LIMIT_TOUCH_FILL", false),
+
   niftySymbol: process.env.NIFTY_BENCHMARK_TICKER ?? "NIFTY50",
 
   /** Min ms between judge (or Pinecone-gate) decisions per ticker — live only */

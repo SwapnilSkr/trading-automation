@@ -221,6 +221,7 @@ curl http://127.0.0.1:3000/health
 | `bun run backtest` | Full replay with PnL simulation → trades_backtest |
 | `bun run backtest-snapshots` | One-shot: snapshot tickers → OHLC sync → clear trades_backtest → backtest → analyze (shows effective judge model and auto-refreshes replay news coverage) |
 | `bun run backtest-ablation` | Run multi-profile strategy ablation on same window (single-strategy, disable-one, and regime-switch profiles) |
+| `bun run backtest-research` | Grid / multi-profile research: sweep env vars (ATR exits, gates, friction), rank by profit factor; optional OOS window |
 | `bun run backtest-analyze` | Print win rate, Sharpe, profit factor from trades_backtest |
 | `bun run live-analyze` | Print end-of-day stats for live/paper `trades` (default: today IST) |
 | `bun run risk-report` | Summarize hard risk/market gate blocks from `trades.risk_eval` |
@@ -289,6 +290,11 @@ bun run backtest-snapshots -- --from 2026-03-20 --to 2026-04-17 --fail-on-missin
 bun run backtest-ablation -- --from 2026-03-20 --to 2026-04-02 --no-clear-first
 # options: --skip-judge --sync --force-sync-all --step 15
 # --profiles baseline,all-strategies,regime-switch,orb15-only,orb-retest-only,meanrev-only,bigboy-only,...
+
+# sweep ATR stop/target (or other env axes) and write reports/research-*.json + .csv
+bun run backtest-research -- --from 2026-03-01 --to 2026-03-28 --preset quick --skip-judge
+# bun run backtest-research -- --help
+# See docs/backtest-research.md for presets, --set, --profiles, --validate-from/--validate-to
 ```
 
 Backtest PnL is net-realistic by default (latency, spread/slippage/impact, and charges). Tune via `BACKTEST_*` realism env vars in `docs/env-reference.md`.

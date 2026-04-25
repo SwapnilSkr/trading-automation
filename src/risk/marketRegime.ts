@@ -9,6 +9,9 @@ export interface MarketRegimeSnapshot {
   niftyChangePct?: number;
   breadthGreenRatio?: number;
   watchlistCount: number;
+  /** Throttled FULL quote: NIFTY + names within `CIRCUIT_PROXIMITY_VETO_PCT` of a circuit */
+  circuitProximityBlock?: boolean;
+  circuitProximityReasons?: string[];
 }
 
 export interface MarketRegimeEval {
@@ -106,6 +109,15 @@ export function evaluateMarketRegime(
   const isLongBreakout = side === "BUY" && isLongBreakoutStrategy(strategy);
   const nifty = snapshot.niftyChangePct;
   const breadth = snapshot.breadthGreenRatio;
+  if (
+    isLongBreakout &&
+    side === "BUY" &&
+    snapshot.circuitProximityBlock
+  ) {
+    reasons.push(
+      `Circuit proximity: ${(snapshot.circuitProximityReasons ?? []).join("; ")}`
+    );
+  }
 
   const niftyHardWeak =
     nifty !== undefined && nifty <= env.marketBlockLongBreakoutsNiftyPct;

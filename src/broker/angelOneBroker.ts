@@ -4,6 +4,7 @@ import type { Ohlc1m } from "../types/domain.js";
 import type {
   BrokerClient,
   BrokerPosition,
+  BrokerRmsSnapshot,
   MarketQuoteFullRow,
 } from "./types.js";
 import { SmartApiPaths } from "./smartApi/endpoints.js";
@@ -57,6 +58,8 @@ export class AngelOneBroker implements BrokerClient {
     string,
     { symboltoken: string; tradingsymbol: string }
   >();
+  /** WebSocket 2.0 market stream (from login / refresh) */
+  private feedToken: string | null = null;
   private positionsCache:
     | { atMs: number; rows: BrokerPosition[] }
     | undefined;
@@ -136,6 +139,7 @@ export class AngelOneBroker implements BrokerClient {
     this.jwt = d.jwtToken;
     this.refreshToken = d.refreshToken ?? this.refreshToken;
     this.jwtExpMs = decodeJwtExpMs(d.jwtToken);
+    if (d.feedToken) this.feedToken = d.feedToken;
   }
 
   private async authorized(): Promise<string> {
@@ -323,6 +327,14 @@ export class AngelOneBroker implements BrokerClient {
     return out;
   }
 
+  /** Exposed for market WebSocket token subscription lists. */
+  async resolveEquitySymbolToken(
+    baseTicker: string
+  ): Promise<{ symboltoken: string; tradingsymbol: string }> {
+    const token = await this.authorized();
+    return this.resolveEquitySymbol(baseTicker, token);
+  }
+
   private async resolveEquitySymbol(
     baseTicker: string,
     token: string
@@ -402,7 +414,10 @@ export class AngelOneBroker implements BrokerClient {
     side: "BUY" | "SELL";
     qty: number;
     strategy: string;
-  }): Promise<{ orderId: string }> {
+    orderKind?: "MARKET" | "LIMIT" | "SL" | "SL-M";
+    limitPrice?: number;
+    orderTag?: string;
+  }): Promise<{ orderId: string; uniqueOrderId?: string }> {
     if (env.executionEnv !== "LIVE") {
       const id = `paper-${Date.now()}-${input.ticker}`;
       console.log("[Angel] EXECUTION_ENV!=LIVE — skip exchange order", {
@@ -418,22 +433,32 @@ export class AngelOneBroker implements BrokerClient {
       token
     );
 
-    const res = await this.http.post(
-      SmartApiPaths.placeOrder,
-      {
-        variety: "NORMAL",
-        tradingsymbol,
-        symboltoken,
-        transactiontype: input.side,
-        exchange: env.angelExchange,
-        ordertype: "MARKET",
-        producttype: "INTRADAY",
-        duration: "DAY",
-        quantity: input.qty,
-        price: 0,
-      },
-      token
-    );
+    const kind = input.orderKind ?? "MARKET";
+    const ordertype =
+      kind === "MARKET" ? "MARKET" : kind === "SL-M" ? "SL-M" : kind;
+    const price =
+      kind === "MARKET" ? 0 : Number(input.limitPrice ?? 0);
+    if (kind !== "MARKET" && !Number.isFinite(price)) {
+      throw new Error(`Angel placeOrder: ${kind} needs limitPrice`);
+    }
+
+    const body: Record<string, unknown> = {
+      variety: "NORMAL",
+      tradingsymbol,
+      symboltoken,
+      transactiontype: input.side,
+      exchange: env.angelExchange,
+      ordertype,
+      producttype: "INTRADAY",
+      duration: "DAY",
+      quantity: input.qty,
+      price,
+    };
+    if (input.orderTag) {
+      body.ordertag = String(input.orderTag).replace(/\s/g, "").slice(0, 20);
+    }
+
+    const res = await this.http.post(SmartApiPaths.placeOrder, body, token);
 
     if (res.status !== true) {
       const msg =
@@ -441,12 +466,100 @@ export class AngelOneBroker implements BrokerClient {
       throw new Error(`Angel placeOrder failed: ${msg}`);
     }
 
-    const data = res.data as { orderid?: string; orderId?: string };
+    const data = res.data as {
+      orderid?: string;
+      orderId?: string;
+      uniqueorderid?: string;
+      uniqueOrderId?: string;
+    };
     const orderId = String(data?.orderid ?? data?.orderId ?? "");
     if (!orderId) {
       throw new Error(`Angel placeOrder: missing order id in ${JSON.stringify(data)}`);
     }
-    return { orderId };
+    const uniqueOrderId =
+      data.uniqueorderid !== undefined
+        ? String(data.uniqueorderid)
+        : data.uniqueOrderId !== undefined
+          ? String(data.uniqueOrderId)
+          : undefined;
+    return { orderId, uniqueOrderId };
+  }
+
+  async modifyOrder(input: {
+    variety?: string;
+    orderid: string;
+    tradingsymbol: string;
+    symboltoken: string;
+    ordertype: string;
+    producttype: string;
+    transactiontype: "BUY" | "SELL";
+    price: number;
+    quantity: number;
+  }): Promise<unknown> {
+    const token = await this.authorized();
+    const res = await this.http.post(
+      SmartApiPaths.modifyOrder,
+      {
+        variety: input.variety ?? "NORMAL",
+        orderid: input.orderid,
+        tradingsymbol: input.tradingsymbol,
+        symboltoken: input.symboltoken,
+        ordertype: input.ordertype,
+        producttype: input.producttype,
+        transactiontype: input.transactiontype,
+        price: input.price,
+        quantity: input.quantity,
+      },
+      token
+    );
+    if (res.status !== true) {
+      const msg =
+        typeof res.message === "string" ? res.message : JSON.stringify(res);
+      throw new Error(`Angel modifyOrder failed: ${msg}`);
+    }
+    return res.data;
+  }
+
+  async getOrderBook(): Promise<Record<string, unknown>[]> {
+    const token = await this.authorized();
+    const res = await this.http.get(SmartApiPaths.getOrderBook, token);
+    if (res.status !== true || !Array.isArray(res.data)) {
+      return [];
+    }
+    return res.data as Record<string, unknown>[];
+  }
+
+  async getOrderDetails(
+    uniqueOrderId: string
+  ): Promise<Record<string, unknown> | null> {
+    const token = await this.authorized();
+    const path = `${SmartApiPaths.orderDetails}/${encodeURIComponent(uniqueOrderId)}`;
+    const res = await this.http.get(path, token);
+    if (res.status !== true || res.data === null || typeof res.data !== "object") {
+      return null;
+    }
+    return res.data as Record<string, unknown>;
+  }
+
+  async getMarketStreamCredentials(): Promise<{
+    jwt: string;
+    feedToken: string;
+    apiKey: string;
+    clientCode: string;
+  } | null> {
+    const jwt = await this.authorized();
+    if (!this.feedToken) {
+      console.warn(
+        "[Angel] feedToken missing from login — market WebSocket unavailable (re-login may fix)"
+      );
+      return null;
+    }
+    return {
+      jwt,
+      feedToken: this.feedToken,
+      apiKey: env.angelApiKey,
+      clientCode: env.angelClientCode,
+    };
   }
 
   async closeIntraday(ticker: string): Promise<void> {
@@ -483,6 +596,26 @@ export class AngelOneBroker implements BrokerClient {
     }
     const token = await this.authorized();
     return this.listOpenPositionsCached(token);
+  }
+
+  /**
+   * Current funds / margin from Angel getRMS (not historical — snapshot at call time).
+   * @see https://smartapi.angelbroking.com/docs — User / Funds
+   */
+  async fetchRmsSnapshot(): Promise<BrokerRmsSnapshot | null> {
+    const token = await this.authorized();
+    const res = await this.http.get(SmartApiPaths.getRms, token);
+    if (res.status !== true || res.data === null || typeof res.data !== "object") {
+      return null;
+    }
+    const d = res.data as Record<string, unknown>;
+    const net = parseRmsNumber(d.net);
+    const ac = parseRmsNumber(d.availablecash ?? d.availableCash);
+    if (net === undefined && ac === undefined) return null;
+    return {
+      net: net ?? ac ?? 0,
+      availableCash: ac ?? net ?? 0,
+    };
   }
 
   private async listOpenPositionsCached(
@@ -522,6 +655,15 @@ export class AngelOneBroker implements BrokerClient {
   }
 }
 
+function parseRmsNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/,/g, "").trim());
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
 function quoteNum(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const n = Number(v);
@@ -559,17 +701,44 @@ function parseQuoteFetched(
     );
     const ticker = (st && tokenToTicker.get(st)) || sym;
     if (!ticker) continue;
+    const ltp = quoteNum(o.ltp) ?? quoteNum(o.last_traded_price);
+    const upper =
+      quoteNum(o.upperCircuit) ??
+      quoteNum(o.highDpr) ??
+      quoteNum(o.upper_circuit_limit);
+    const lower =
+      quoteNum(o.lowerCircuit) ??
+      quoteNum(o.lowDpr) ??
+      quoteNum(o.lower_circuit_limit);
     rows.push({
       ticker,
       open: quoteNum(o.open),
       close: quoteNum(o.close),
-      ltp: quoteNum(o.ltp) ?? quoteNum(o.last_traded_price),
+      ltp,
       tradeVolume:
         quoteNum(o.tradeVolume) ??
         quoteNum(o.totTrdVol) ??
         quoteNum(o.volume),
       tradingSymbol: String(o.tradingSymbol ?? o.tradingsymbol ?? ""),
       symbolToken: st,
+      upperCircuit: upper,
+      lowerCircuit: lower,
+      week52High:
+        quoteNum(o.week52High) ??
+        quoteNum(o.YeartHigh) ??
+        quoteNum(o.yearHigh),
+      week52Low:
+        quoteNum(o.week52Low) ??
+        quoteNum(o.YeartLow) ??
+        quoteNum(o.yearLow),
+      totBuyQuan:
+        quoteNum(o.totBuyQuan) ??
+        quoteNum(o.tot_buy_qty) ??
+        quoteNum(o.buyQty),
+      totSellQuan:
+        quoteNum(o.totSellQuan) ??
+        quoteNum(o.tot_sell_qty) ??
+        quoteNum(o.sellQty),
     });
   }
   return rows;

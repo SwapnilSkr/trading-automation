@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { DateTime } from "luxon";
 import { createBroker } from "../broker/factory.js";
+import type { BrokerRmsSnapshot } from "../broker/types.js";
 import { env } from "../config/env.js";
 import { collections, getDb } from "../db/mongo.js";
 import {
@@ -115,6 +116,9 @@ interface ClosedTradeRow {
   ticker: string;
   strategy: string;
   side: "BUY" | "SELL";
+  entryPrice: number;
+  entryTimeStr: string;
+  qty: number;
   pnl: number;
   pnlPct?: number;
   outcome: string;
@@ -172,9 +176,29 @@ interface SessionTotals {
   execRate: number;
 }
 
+/** Angel getRMS at dashboard refresh; implied open = rough proxy, not a broker statement. */
+interface SessionAccountFunds {
+  rms: BrokerRmsSnapshot;
+  rmsAsOf: string;
+  /** rms.net − app session realized PnL; null when RMS net is 0 / unusable */
+  impliedAtSessionOpen: number | null;
+}
+
+/** PAPER: sizing reference + hypothetical book (not broker margin). */
+interface SessionPaperEconomics {
+  accountEquityRef: number;
+  /** Reference start-of-day notional book (uses ACCOUNT_EQUITY) */
+  hypotheticalStart: number;
+  hypotheticalEnd: number;
+  /** Sum of (entry price × qty) for closed trades = capital into positions at entry */
+  totalEntryNotional: number;
+}
+
 interface SessionDashboard {
   date: string;
   asOf: string;
+  accountFunds: SessionAccountFunds | { error: string } | null;
+  paperEconomics: SessionPaperEconomics | null;
   openPositions: OpenPositionRow[];
   closedTrades: ClosedTradeRow[];
   strategyStats: StrategyStats[];
@@ -832,6 +856,19 @@ function fmtPnl(pnl: number): string {
   return `${sign}₹${pnl.toFixed(0)}`;
 }
 
+function fmtInr2(n: number): string {
+  const s = n < 0 ? "-" : "";
+  return `${s}₹${Math.abs(n).toFixed(2)}`;
+}
+
+/** Session PnL ÷ ACCOUNT_EQUITY × 100 — same scaling idea as “what if equity were smaller?” */
+function pnlVsReferenceEquityPct(pnl: number, accountEquity: number): string {
+  if (!Number.isFinite(accountEquity) || accountEquity <= 0) return "n/a";
+  const pct = (pnl / accountEquity) * 100;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(3)}%`;
+}
+
 function fmtPct(pct: number | undefined): string {
   if (pct === undefined) return "";
   const sign = pct >= 0 ? "+" : "";
@@ -899,6 +936,7 @@ async function computeVolRegimesForTickers(
 }
 
 async function loadSessionDashboard(date: string): Promise<SessionDashboard> {
+  /** PAPER and LIVE rows both live in `trades`; filtered by calendar `entry_time` IST (see each doc’s `env`). */
   const allTrades = await tradesForDay(date);
   const { from, to } = sessionRange(date);
 
@@ -920,6 +958,11 @@ async function loadSessionDashboard(date: string): Promise<SessionDashboard> {
       ticker: t.ticker,
       strategy: t.strategy,
       side: t.side ?? "BUY",
+      entryPrice: t.entry_price ?? 0,
+      entryTimeStr: DateTime.fromJSDate(t.entry_time, { zone: IST }).toFormat(
+        "HH:mm"
+      ),
+      qty: t.qty ?? 0,
       pnl: t.result?.pnl ?? 0,
       pnlPct: t.result?.pnl_percent,
       outcome: t.result?.outcome ?? "?",
@@ -1029,9 +1072,50 @@ async function loadSessionDashboard(date: string): Promise<SessionDashboard> {
   const executedAll = allTrades.filter((t) => t.order_executed === true);
   const realizedPnl = closedTrades.reduce((s, t) => s + t.pnl, 0);
 
+  const totalEntryNotional = closedTrades.reduce(
+    (s, t) => s + Math.max(0, t.entryPrice) * Math.max(0, t.qty),
+    0
+  );
+  const openEntryNotional = openPositions.reduce(
+    (s, p) => s + Math.max(0, p.entryPrice) * Math.max(0, p.qty),
+    0
+  );
+
+  const paperEconomics: SessionPaperEconomics | null =
+    env.executionEnv === "PAPER"
+      ? {
+          accountEquityRef: env.accountEquity,
+          hypotheticalStart: env.accountEquity,
+          hypotheticalEnd: env.accountEquity + realizedPnl,
+          totalEntryNotional: totalEntryNotional + openEntryNotional,
+        }
+      : null;
+
+  let accountFunds: SessionDashboard["accountFunds"] = null;
+  try {
+    const broker = createBroker();
+    await broker.refreshSessionIfNeeded();
+    const rms = await broker.fetchRmsSnapshot();
+    if (rms) {
+      const impliedAtSessionOpen =
+        Math.abs(rms.net) > 1e-6 ? rms.net - realizedPnl : null;
+      accountFunds = {
+        rms,
+        rmsAsOf: nowIST().toFormat("HH:mm"),
+        impliedAtSessionOpen,
+      };
+    }
+  } catch (e) {
+    accountFunds = {
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
   return {
     date,
     asOf: nowIST().toFormat("HH:mm"),
+    accountFunds,
+    paperEconomics,
     openPositions,
     closedTrades,
     strategyStats: [...stratMap.values()].sort((a, b) => b.total - a.total),
@@ -1057,6 +1141,56 @@ function printSessionDashboard(d: SessionDashboard): void {
 
   console.log(`\n[ops] Live session — ${d.date}  as-of ${d.asOf} IST`);
 
+  // ── Account (Angel RMS) —──────────────────────────────────────────────────
+  sep("ACCOUNT (Angel RMS)");
+  if (d.accountFunds === null) {
+    console.log(
+      "  (no funds data — set Angel SmartAPI creds, or use a live broker, to fetch getRMS)"
+    );
+  } else if ("error" in d.accountFunds) {
+    console.log(`  RMS fetch failed: ${d.accountFunds.error}`);
+  } else {
+    const { rms, rmsAsOf, impliedAtSessionOpen } = d.accountFunds;
+    console.log(`  Net funds (RMS, ${rmsAsOf} IST):  ${fmtInr2(rms.net)}`);
+    console.log(`  Available cash:                ${fmtInr2(rms.availableCash)}`);
+    if (impliedAtSessionOpen === null) {
+      console.log(
+        "  Implied session open:          n/a  (RMS net is 0 — use PAPER ECONOMICS below if EXECUTION_ENV=PAPER)"
+      );
+    } else {
+      console.log(
+        `  Implied at session open ≈:       ${fmtInr2(impliedAtSessionOpen)}  (net minus this app's session realized PnL; not official, ignores other flows & open M2M)`
+      );
+    }
+  }
+
+  if (env.accountEquity > 0) {
+    sep("SESSION vs ACCOUNT_EQUITY (PAPER & LIVE)");
+    console.log(
+      `  ACCOUNT_EQUITY (.env):            ${fmtInr2(env.accountEquity)}  (sizing risk reference — same in PAPER and LIVE)`
+    );
+    console.log(
+      `  Session realized PnL / equity:    ${pnlVsReferenceEquityPct(d.totals.realizedPnl, env.accountEquity)}  (sum of today’s closed trades in Mongo ÷ this value; not broker account ROE)`
+    );
+  }
+
+  if (d.paperEconomics) {
+    sep("PAPER (hypothetical book)");
+    const p = d.paperEconomics;
+    console.log(
+      `  Reference equity (ACCOUNT_EQUITY):  ${fmtInr2(p.accountEquityRef)}  (used for sizing; set in .env)`
+    );
+    console.log(
+      `  Hypothetical start of day:        ${fmtInr2(p.hypotheticalStart)}  (same reference — not a broker balance)`
+    );
+    console.log(
+      `  Hypothetical end (start + PnL):  ${fmtInr2(p.hypotheticalEnd)}  (session realized ${fmtPnl(d.totals.realizedPnl)})`
+    );
+    console.log(
+      `  Total entry notional (Σ price×qty): ${fmtInr2(p.totalEntryNotional)}  (sum of entry legs for closed + open)`
+    );
+  }
+
   // ── Open positions ────────────────────────────────────────────────────────
   sep(`OPEN POSITIONS (${d.openPositions.length})`);
   if (d.openPositions.length === 0) {
@@ -1077,11 +1211,16 @@ function printSessionDashboard(d: SessionDashboard): void {
   if (d.closedTrades.length === 0) {
     console.log("  none yet");
   } else {
-    console.log(`  ${col("Ticker", 14)}${col("Side", 6)}${col("Strategy", 30)}${col("Out", 8)}${col("PnL", 10)}Pct    Exit`);
+    console.log(
+      `  ${col("Ticker", 12)}${col("Side", 5)}${col("Strategy", 22)}${col("Entry", 10)}${col("In", 6)}` +
+        `${col("Out", 5)}${col("PnL", 9)}${col("Pct", 8)}${col("Ex", 6)}`
+    );
     for (const t of d.closedTrades) {
+      const entryStr =
+        t.entryPrice > 0 ? `₹${t.entryPrice.toFixed(2)}` : "n/a";
       console.log(
-        `  ${col(t.ticker, 14)}${col(t.side, 6)}${col(t.strategy, 30)}` +
-        `${col(t.outcome, 8)}${col(fmtPnl(t.pnl), 10)}${col(fmtPct(t.pnlPct), 10)}${t.exitTimeStr}`
+        `  ${col(t.ticker, 12)}${col(t.side, 5)}${col(t.strategy, 22)}${col(entryStr, 10)}${col(t.entryTimeStr, 6)}` +
+        `${col(t.outcome, 5)}${col(fmtPnl(t.pnl), 9)}${col(fmtPct(t.pnlPct), 8)}${col(t.exitTimeStr, 6)}`
       );
     }
   }
@@ -1096,6 +1235,11 @@ function printSessionDashboard(d: SessionDashboard): void {
     `  Realized PnL: ${fmtPnl(t.realizedPnl)}   ` +
     `Wins: ${t.wins}   Losses: ${t.losses}   Open: ${t.openCount}`
   );
+  if (env.accountEquity > 0) {
+    console.log(
+      `  Return vs ACCOUNT_EQUITY:   ${pnlVsReferenceEquityPct(t.realizedPnl, env.accountEquity)}  (PAPER & LIVE; same as section above when equity > 0)`
+    );
+  }
 
   // ── Decision funnel by strategy ───────────────────────────────────────────
   sep("DECISION FUNNEL BY STRATEGY");

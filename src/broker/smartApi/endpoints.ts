@@ -10,7 +10,13 @@ export const SmartApiPaths = {
   generateToken: "/rest/auth/angelbroking/jwt/v1/generateTokens",
   logout: "/rest/secure/angelbroking/user/v1/logout",
   placeOrder: "/rest/secure/angelbroking/order/v1/placeOrder",
+  modifyOrder: "/rest/secure/angelbroking/order/v1/modifyOrder",
+  getOrderBook: "/rest/secure/angelbroking/order/v1/getOrderBook",
+  /** Path prefix; append URL-encoded `UniqueOrderId` (GET) */
+  orderDetails: "/rest/secure/angelbroking/order/v1/details",
   getPosition: "/rest/secure/angelbroking/order/v1/getPosition",
+  /** Funds / margin (RMS) — GET */
+  getRms: "/rest/secure/angelbroking/user/v1/getRMS",
   getCandleData: "/rest/secure/angelbroking/historical/v1/getCandleData",
   /** Bulk quote — max ~50 tokens per request, respect ~1 rps */
   marketQuote: "/rest/secure/angelbroking/market/v1/quote",

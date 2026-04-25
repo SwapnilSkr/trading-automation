@@ -137,6 +137,12 @@ export interface TradeLogDoc extends Document {
   };
   /** Set on rows written to `trades_backtest` */
   backtest_run_id?: string;
+  /** Angel `orderid` from placeOrder (when LIVE) or synthetic `paper-...` */
+  angel_orderid?: string;
+  /** Angel `uniqueorderid` when available from place response or postback */
+  angel_uniqueorderid?: string;
+  /** Best-effort last broker `orderstatus` from postback / poll */
+  broker_order_status?: string;
   result?: {
     /** Net PnL after slippage and charges */
     pnl: number;

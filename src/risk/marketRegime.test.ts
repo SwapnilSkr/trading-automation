@@ -31,4 +31,21 @@ describe("market regime gate", () => {
     expect(ev.size_multiplier).toBeLessThan(1);
     expect(ev.confidence_floor).toBeGreaterThan(0);
   });
+
+  test("veto long breakouts on circuit proximity (FULL quote throttle)", () => {
+    const snapshot = {
+      at: new Date("2026-04-21T05:00:00.000Z"),
+      niftyChangePct: 0.5,
+      breadthGreenRatio: 0.6,
+      watchlistCount: 20,
+      circuitProximityBlock: true,
+      circuitProximityReasons: ["RELIANCE: near UCL 0.40%"],
+    };
+    expect(evaluateMarketRegime("ORB_15M", "BUY", snapshot).allowed).toBe(
+      false
+    );
+    expect(evaluateMarketRegime("MEAN_REV_Z", "BUY", snapshot).allowed).toBe(
+      true
+    );
+  });
 });

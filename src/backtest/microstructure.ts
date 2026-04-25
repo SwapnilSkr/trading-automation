@@ -87,6 +87,20 @@ export function applyExecutionFill(
   return { fillPrice, slippageRupees, totalBps };
 }
 
+/**
+ * Optional limit fill at bar touch (simplified). Enable with `BACKTEST_LIMIT_TOUCH_FILL`
+ * and wire from a backtest that supplies `limitPrice` when `EXECUTE_LIMIT_ORDERS` is mirrored in sim.
+ * Buy: fill at `min(limitPrice, bar.h)`; sell: at `max(limitPrice, bar.l)`.
+ */
+export function applyLimitFillAtBarTouch(
+  side: "BUY" | "SELL",
+  bar: Ohlc1m,
+  limitPrice: number
+): number {
+  if (side === "BUY") return Math.min(limitPrice, bar.h);
+  return Math.max(limitPrice, bar.l);
+}
+
 export interface ChargeBreakdown {
   total: number;
   brokerage: number;
